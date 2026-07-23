@@ -4,6 +4,7 @@ import "time"
 
 type StorageFile struct {
 	ID        int64     `json:"id" gorm:"primaryKey"`
+	UserID    int64     `json:"-" gorm:"column:user_id"`
 	S3Key     string    `json:"-" gorm:"column:s3_key"`
 	S3Bucket  string    `json:"-" gorm:"column:s3_bucket"`
 	FileName  string    `json:"fileName" gorm:"column:file_name"`
