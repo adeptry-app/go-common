@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/GunarsK-portfolio/portfolio-common/models"
+	"github.com/adeptry-app/go-common/models"
 	"gorm.io/gorm"
 )
 

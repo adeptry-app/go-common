@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/GunarsK-portfolio/portfolio-common/middleware"
+	"github.com/adeptry-app/go-common/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 )

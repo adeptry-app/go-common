@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/GunarsK-portfolio/portfolio-common/config"
+	"github.com/adeptry-app/go-common/config"
 )
 
 // ContextKey is the type for context keys

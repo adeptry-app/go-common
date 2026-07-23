@@ -3,7 +3,7 @@ package utils
 import (
 	"fmt"
 
-	"github.com/GunarsK-portfolio/portfolio-common/models"
+	"github.com/adeptry-app/go-common/models"
 )
 
 // BuildFileURL constructs the full URL for a file stored in MinIO/S3

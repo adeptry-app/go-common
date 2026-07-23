@@ -1,4 +1,4 @@
-module github.com/GunarsK-portfolio/portfolio-common
+module github.com/adeptry-app/go-common
 
 go 1.26.5
 

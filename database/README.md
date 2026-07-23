@@ -5,7 +5,7 @@ Database connection utilities for GORM and pgx with connection pooling.
 ## GORM Usage
 
 ```go
-import "github.com/GunarsK-portfolio/portfolio-common/database"
+import "github.com/adeptry-app/go-common/database"
 
 db, err := database.Connect(database.PostgresConfig{
     Host:     "localhost",
@@ -29,7 +29,7 @@ shared `config.DatabaseConfig` and verifies connectivity with a ping. The
 appName argument is reported as the PostgreSQL `application_name`.
 
 ```go
-import "github.com/GunarsK-portfolio/portfolio-common/database"
+import "github.com/adeptry-app/go-common/database"
 
 pool, err := database.NewPgxPool(ctx, cfg.DatabaseConfig, "my-service")
 if err != nil {

@@ -22,8 +22,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/GunarsK-portfolio/portfolio-common/config"
-	"github.com/GunarsK-portfolio/portfolio-common/logger"
+	"github.com/adeptry-app/go-common/config"
+	"github.com/adeptry-app/go-common/logger"
 )
 
 var (

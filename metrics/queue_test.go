@@ -6,7 +6,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
-	"github.com/GunarsK-portfolio/portfolio-common/queue"
+	"github.com/adeptry-app/go-common/queue"
 )
 
 // Compile-time check: QueueMetrics satisfies the queue package recorder

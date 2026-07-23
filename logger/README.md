@@ -5,7 +5,7 @@ Structured logging with slog and Gin middleware.
 ## Usage
 
 ```go
-import "github.com/GunarsK-portfolio/portfolio-common/logger"
+import "github.com/adeptry-app/go-common/logger"
 
 // From LOG_LEVEL / LOG_FORMAT / LOG_SOURCE environment variables
 appLogger := logger.NewFromEnv("my-service")
