@@ -5,7 +5,7 @@ Common HTTP handler utilities for Gin.
 ## Usage
 
 ```go
-import "github.com/GunarsK-portfolio/portfolio-common/handlers"
+import "github.com/adeptry-app/go-common/handlers"
 
 // Error responses
 handlers.RespondError(c, http.StatusBadRequest, "Invalid input")

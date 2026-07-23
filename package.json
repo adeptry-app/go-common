@@ -1,5 +1,5 @@
 {
-  "name": "portfolio-common",
+  "name": "go-common",
   "private": true,
   "devDependencies": {
     "markdownlint-cli2": "^0.23.0"

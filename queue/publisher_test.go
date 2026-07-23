@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GunarsK-portfolio/portfolio-common/config"
+	"github.com/adeptry-app/go-common/config"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 

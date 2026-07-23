@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/GunarsK-portfolio/portfolio-common/logger"
+	"github.com/adeptry-app/go-common/logger"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )

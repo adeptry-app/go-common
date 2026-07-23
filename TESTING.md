@@ -2,7 +2,7 @@
 
 ## Overview
 
-The portfolio-common library uses Go's standard `testing` package for unit tests.
+The go-common library uses Go's standard `testing` package for unit tests.
 
 ## Quick Commands
 

@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GunarsK-portfolio/portfolio-common/config"
-	"github.com/GunarsK-portfolio/portfolio-common/logger"
+	"github.com/adeptry-app/go-common/config"
+	"github.com/adeptry-app/go-common/logger"
 	"github.com/google/uuid"
 	amqp "github.com/rabbitmq/amqp091-go"
 )

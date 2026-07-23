@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/GunarsK-portfolio/portfolio-common/jwt"
+	"github.com/adeptry-app/go-common/jwt"
 	"github.com/gin-gonic/gin"
 )
 

@@ -5,7 +5,7 @@ Dependency health checking with aggregated results.
 ## Usage
 
 ```go
-import "github.com/GunarsK-portfolio/portfolio-common/health"
+import "github.com/adeptry-app/go-common/health"
 
 // Create aggregator with timeout
 healthAgg := health.NewAggregator(3 * time.Second)

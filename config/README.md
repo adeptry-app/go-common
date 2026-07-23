@@ -5,7 +5,7 @@ Configuration management with validation and environment variable helpers.
 ## Usage
 
 ```go
-import "github.com/GunarsK-portfolio/portfolio-common/config"
+import "github.com/adeptry-app/go-common/config"
 
 // Service configuration
 cfg := config.NewServiceConfig("8080")

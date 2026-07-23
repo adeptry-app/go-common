@@ -30,9 +30,9 @@ Comprehensive continuous integration pipeline that runs on:
 Add these to your README.md:
 
 ```markdown
-![CI](https://github.com/GunarsK-portfolio/portfolio-common/workflows/CI/badge.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/GunarsK-portfolio/portfolio-common)](https://goreportcard.com/report/github.com/GunarsK-portfolio/portfolio-common)
-[![codecov](https://codecov.io/gh/GunarsK-portfolio/portfolio-common/branch/main/graph/badge.svg)](https://codecov.io/gh/GunarsK-portfolio/portfolio-common)
+![CI](https://github.com/adeptry-app/go-common/workflows/CI/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/adeptry-app/go-common)](https://goreportcard.com/report/github.com/adeptry-app/go-common)
+[![codecov](https://codecov.io/gh/adeptry-app/go-common/branch/main/graph/badge.svg)](https://codecov.io/gh/adeptry-app/go-common)
 ```
 
 ## Local Testing

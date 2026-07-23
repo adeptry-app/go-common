@@ -41,7 +41,7 @@ Shared GORM database models for portfolio services.
 ## Usage
 
 ```go
-import "github.com/GunarsK-portfolio/portfolio-common/models"
+import "github.com/adeptry-app/go-common/models"
 
 // Load profile with associated files
 var profile models.Profile

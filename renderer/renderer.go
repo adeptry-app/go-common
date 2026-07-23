@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"html/template"
 
-	"github.com/GunarsK-portfolio/portfolio-common/models"
-	"github.com/GunarsK-portfolio/portfolio-common/renderer/templates"
+	"github.com/adeptry-app/go-common/models"
+	"github.com/adeptry-app/go-common/renderer/templates"
 )
 
 // emailTypeMeta holds subject line and required template keys per email type

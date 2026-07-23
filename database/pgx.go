@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/GunarsK-portfolio/portfolio-common/config"
+	"github.com/adeptry-app/go-common/config"
 )
 
 // PgxPoolOption customizes the pgxpool configuration before the pool is

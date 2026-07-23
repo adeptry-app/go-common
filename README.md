@@ -1,11 +1,11 @@
-# Portfolio Common
+# Go Common
 
-![CI](https://github.com/GunarsK-portfolio/portfolio-common/workflows/CI/badge.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/GunarsK-portfolio/portfolio-common)](https://goreportcard.com/report/github.com/GunarsK-portfolio/portfolio-common)
-[![codecov](https://codecov.io/gh/GunarsK-portfolio/portfolio-common/graph/badge.svg)](https://codecov.io/gh/GunarsK-portfolio/portfolio-common)
-[![CodeRabbit](https://img.shields.io/coderabbit/prs/github/GunarsK-portfolio/portfolio-common?label=CodeRabbit&color=2ea44f)](https://coderabbit.ai)
+![CI](https://github.com/adeptry-app/go-common/workflows/CI/badge.svg)
+[![Go Report Card](https://goreportcard.com/badge/github.com/adeptry-app/go-common)](https://goreportcard.com/report/github.com/adeptry-app/go-common)
+[![codecov](https://codecov.io/gh/adeptry-app/go-common/graph/badge.svg)](https://codecov.io/gh/adeptry-app/go-common)
+[![CodeRabbit](https://img.shields.io/coderabbit/prs/github/adeptry-app/go-common?label=CodeRabbit&color=2ea44f)](https://coderabbit.ai)
 
-Shared Go package for common code across portfolio microservices.
+Shared Go package for common code across microservices.
 
 ## Prerequisites
 
@@ -35,11 +35,11 @@ Shared Go package for common code across portfolio microservices.
 
 ```go
 import (
-    "github.com/GunarsK-portfolio/portfolio-common/config"
-    "github.com/GunarsK-portfolio/portfolio-common/database"
-    "github.com/GunarsK-portfolio/portfolio-common/health"
-    "github.com/GunarsK-portfolio/portfolio-common/jwt"
-    "github.com/GunarsK-portfolio/portfolio-common/middleware"
+    "github.com/adeptry-app/go-common/config"
+    "github.com/adeptry-app/go-common/database"
+    "github.com/adeptry-app/go-common/health"
+    "github.com/adeptry-app/go-common/jwt"
+    "github.com/adeptry-app/go-common/middleware"
 )
 
 // Configuration
@@ -71,15 +71,16 @@ task format              # Format code
 
 ## Services Using This Module
 
-- `admin-api` - Admin dashboard backend
 - `auth-service` - Authentication and sessions
 - `files-api` - File upload/download with MinIO
 - `messaging-api` - Contact form and message queue
-- `public-api` - Public read-only portfolio data
+- `messaging-service` - Email delivery worker
+- `public-api` - RPG backend API
+- `ai-service` - AI homebrew queue worker
 
 ## Version
 
-Current version: `v0.33.0`
+Current version: `v1.0.0`
 
 See [CHANGELOG.md](CHANGELOG.md) for breaking changes and migration guides.
 

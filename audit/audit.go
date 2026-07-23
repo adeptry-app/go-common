@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/GunarsK-portfolio/portfolio-common/logger"
-	"github.com/GunarsK-portfolio/portfolio-common/middleware"
-	"github.com/GunarsK-portfolio/portfolio-common/repository"
+	"github.com/adeptry-app/go-common/logger"
+	"github.com/adeptry-app/go-common/middleware"
+	"github.com/adeptry-app/go-common/repository"
 	"github.com/gin-gonic/gin"
 )
 

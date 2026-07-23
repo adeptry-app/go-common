@@ -8,8 +8,8 @@ Local JWT token validation with automatic TTL handling:
 
 ```go
 import (
-    "github.com/GunarsK-portfolio/portfolio-common/jwt"
-    "github.com/GunarsK-portfolio/portfolio-common/middleware"
+    "github.com/adeptry-app/go-common/jwt"
+    "github.com/adeptry-app/go-common/middleware"
 )
 
 jwtService, _ := jwt.NewValidatorOnly(secret)

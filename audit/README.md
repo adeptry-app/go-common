@@ -5,7 +5,7 @@ Centralized security event logging with automatic context extraction.
 ## Usage
 
 ```go
-import "github.com/GunarsK-portfolio/portfolio-common/audit"
+import "github.com/adeptry-app/go-common/audit"
 
 // 1. Add context middleware
 router.Use(audit.ContextMiddleware())
