@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"runtime/debug"
 	"sync"
 	"time"
@@ -492,9 +493,11 @@ func (c *RabbitMQConsumer) publishToRetryWithCount(ctx context.Context, currentR
 		headers[k] = v
 	}
 
-	// Safe conversion: retry count is bounded by MaxRetries (typically < 10)
 	nextRetry := currentRetry + 1
-	headers[RetryCountHeader] = int32(nextRetry) //nolint:gosec // bounded by MaxRetries check
+	if nextRetry > math.MaxInt32 {
+		nextRetry = math.MaxInt32
+	}
+	headers[RetryCountHeader] = int32(nextRetry)
 
 	// Use publisher's channel for retry publish
 	return c.publisher.PublishToRetry(ctx, currentRetry, delivery.Body, delivery.CorrelationId, headers)

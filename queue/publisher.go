@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math/rand/v2"
 	"strconv"
 	"sync"
 	"time"
@@ -354,7 +353,7 @@ func jitteredExpiration(delay time.Duration, jitter float64) string {
 	if jitter > 1 {
 		jitter = 1
 	}
-	reduced := delay - time.Duration(rand.Float64()*jitter*float64(delay))
+	reduced := delay - time.Duration(randFloat64()*jitter*float64(delay))
 	ms := reduced.Milliseconds()
 	if ms < 1 {
 		ms = 1

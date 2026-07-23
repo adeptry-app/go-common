@@ -3,7 +3,6 @@ package queue
 import (
 	"errors"
 	"fmt"
-	"math/rand/v2"
 	"time"
 
 	"github.com/adeptry-app/go-common/config"
@@ -121,7 +120,7 @@ func reconnectDelay(cfg config.RabbitMQConfig, attempt int) time.Duration {
 		delay = cfg.ReconnectMaxDelay
 	}
 
-	jitter := time.Duration(rand.Float64() * 0.25 * float64(delay))
+	jitter := time.Duration(randFloat64() * 0.25 * float64(delay))
 	return delay + jitter
 }
 

@@ -105,3 +105,11 @@ tasks:
       - task: security:scan
       - task: lint:markdown
       - echo "All CI checks passed!"
+
+  ci:fix:
+    desc: Auto-fix all fixable issues (format, tidy, lint:markdown)
+    cmds:
+      - task: format
+      - task: tidy
+      - npx markdownlint-cli2 --fix
+      - echo "All fixable issues resolved!"
