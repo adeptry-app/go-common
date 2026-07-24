@@ -11,7 +11,9 @@ Shared GORM database models.
 ### messaging.*
 
 - `Email` - Outbound emails with status tracking (`ContactMessageCreate` is the
-  public submission DTO, `EmailEvent` the queue payload)
+  public submission DTO, `EmailEvent` the queue payload). Statuses are
+  `pending`, `processing`, `retrying`, `sent`, `failed`; `pending` and
+  `retrying` are the claimable ones.
 - `Recipient` - Email recipients for notifications
 - `DeliveryAttempt` - Email delivery tracking
 

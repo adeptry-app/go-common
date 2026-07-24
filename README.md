@@ -85,12 +85,6 @@ task format              # Format code
 - `public-api` - RPG backend API
 - `ai-service` - AI homebrew queue worker
 
-## Version
-
-Current version: `v1.4.0`
-
-See [CHANGELOG.md](CHANGELOG.md) for breaking changes and migration guides.
-
 ## License
 
 [MIT](LICENSE)

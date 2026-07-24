@@ -31,7 +31,7 @@ var (
 
 // Publisher defines the interface for message queue publishing with retry support
 type Publisher interface {
-	Publish(ctx context.Context, message interface{}) error
+	EventPublisher
 	PublishToRetry(ctx context.Context, retryIndex int, body []byte, correlationId string, headers amqp.Table) error
 	PublishToDLQ(ctx context.Context, body []byte, correlationId string) error
 	MaxRetries() int

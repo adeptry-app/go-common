@@ -35,6 +35,7 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 - `RedisConfig` - Redis connection settings
 - `S3Config` - MinIO/S3 storage settings
 - `RabbitMQConfig` - RabbitMQ connection and queue settings
+- `SweeperConfig` - stale-row sweeper tuning for queue workers
 - `CookieConfig` - httpOnly cookie settings for authentication
 
 ## Environment Variables
@@ -70,6 +71,29 @@ See the `queue` package README for defaults and semantics.
 `NewRabbitMQConfigWithPrefix(prefix)` reads each variable as
 `<prefix>RABBITMQ_*` with fallback to the un-prefixed name, allowing one
 service to configure multiple queues independently.
+
+### SweeperConfig
+
+- `SWEEPER_INTERVAL` - Time between recovery passes (default `1m`)
+- `SWEEPER_PENDING_AGE` - Age at which a never-claimed row is stale
+  (default `2m`)
+- `SWEEPER_PROCESSING_AGE` - Quiet time before an in-flight row is stale
+  (defaults to one interval above the floor below)
+- `SWEEPER_MAX_ATTEMPTS` - Attempt budget before a stale row is failed
+  (default `4`)
+
+`SWEEPER_PROCESSING_AGE` must exceed the longest `RABBITMQ_RETRY_DELAYS` rung
+plus the worker's job timeout, or the sweeper double-publishes work that is
+still legitimately waiting. That floor is deployment-specific, so
+`NewSweeperConfig` takes both and panics on an override at or under it:
+
+```go
+cfg.Sweeper = config.NewSweeperConfig(cfg.RabbitMQ.RetryDelays, cfg.JobTimeout)
+```
+
+Recovery runs on the same timescale as the ladder: a 12h last rung means a dead
+worker's row is also recovered around 12h later. Shorten the ladder if that is
+too slow. See `queue.StaleSweeper` for the loop that consumes this config.
 
 ### CookieConfig
 
