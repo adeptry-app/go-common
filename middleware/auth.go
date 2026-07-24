@@ -78,6 +78,17 @@ func (m *AuthMiddleware) ValidateToken() gin.HandlerFunc {
 			return
 		}
 
+		// Refresh tokens are only valid at the auth service token endpoint
+		if claims.TokenType != jwt.TokenTypeAccess {
+			slog.Warn("rejected non-access token",
+				"token_type", claims.TokenType,
+				"path", c.Request.URL.Path,
+			)
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - invalid token"})
+			c.Abort()
+			return
+		}
+
 		// Get TTL from claims
 		ttl := claims.GetTTL()
 		if ttl <= 0 {

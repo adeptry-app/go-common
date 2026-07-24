@@ -641,10 +641,6 @@ func TestValidateToken_ValidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
-	if claims == nil {
-		t.Fatal("ValidateToken() returned nil claims")
-	}
-
 	if claims.UserID != userID {
 		t.Errorf("Claims.UserID = %v, want %v", claims.UserID, userID)
 	}
@@ -1158,5 +1154,33 @@ func TestConcurrentTokenValidation(t *testing.T) {
 	// Check for any errors
 	for err := range errors {
 		t.Errorf("Concurrent validation error: %v", err)
+	}
+}
+
+func TestGenerateToken_TokenType(t *testing.T) {
+	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+
+	access, err := svc.GenerateAccessToken(1, "testuser", nil)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+	accessClaims, err := svc.ValidateToken(access)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+	if accessClaims.TokenType != TokenTypeAccess {
+		t.Errorf("access TokenType = %q, want %q", accessClaims.TokenType, TokenTypeAccess)
+	}
+
+	refresh, err := svc.GenerateRefreshToken(1, "testuser", nil)
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
+	refreshClaims, err := svc.ValidateToken(refresh)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+	if refreshClaims.TokenType != TokenTypeRefresh {
+		t.Errorf("refresh TokenType = %q, want %q", refreshClaims.TokenType, TokenTypeRefresh)
 	}
 }
