@@ -26,11 +26,12 @@ Needs migration `V20260724120000` - `repository.ActionLog` writes
 - `renderer.SubjectForType` becomes `SubjectFor(emailType, data)`. `contact_form`
   has no static subject, so the old call returned `("", true)` and both API
   services stored an empty subject; it now comes from `data["subject"]`.
+- `http_request_duration_seconds` drops its `status` label; dashboards and
+  alerts grouping by it need updating.
 - Removed, no callers: four `ActionLogRepository` query methods, the metrics DB
-  and external-call families, the `status` label on
-  `http_request_duration_seconds`, `models.ContactMessage*`,
-  `DeliveryStatusPending` (rejected by the table's CHECK constraint), the
-  `utils` package, and the portfolio/miniatures models.
+  and external-call families, `models.ContactMessage*`, `DeliveryStatusPending`
+  (rejected by the table's CHECK constraint), the `utils` package, and the
+  portfolio/miniatures models.
 
 ## v1.3.0
 

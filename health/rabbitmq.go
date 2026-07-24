@@ -2,7 +2,6 @@ package health
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -113,10 +112,9 @@ func (c *QueueDepthChecker) Check(_ context.Context) CheckResult {
 	}
 
 	result := Healthy(start)
-	result.Details = map[string]any{"messages": queue.Messages}
 	if c.degradedThreshold > 0 && queue.Messages >= c.degradedThreshold {
-		result.Status = StatusDegraded
-		result.Error = fmt.Sprintf("queue depth %d reached threshold %d", queue.Messages, c.degradedThreshold)
+		result = Degraded(start, "queue depth %d reached threshold %d", queue.Messages, c.degradedThreshold)
 	}
+	result.Details = map[string]any{"messages": queue.Messages}
 	return result
 }

@@ -8,6 +8,8 @@ Both entry points take the shared `config.DatabaseConfig`.
 
 ```go
 import (
+    "log"
+
     "github.com/adeptry-app/go-common/config"
     "github.com/adeptry-app/go-common/database"
 )

@@ -38,8 +38,17 @@ func Healthy(start time.Time) CheckResult {
 
 // Unhealthy builds a failing result with a formatted reason, timed from start.
 func Unhealthy(start time.Time, format string, args ...any) CheckResult {
+	return failing(StatusUnhealthy, start, format, args...)
+}
+
+// Degraded builds a working-but-impaired result with a formatted reason.
+func Degraded(start time.Time, format string, args ...any) CheckResult {
+	return failing(StatusDegraded, start, format, args...)
+}
+
+func failing(status Status, start time.Time, format string, args ...any) CheckResult {
 	return CheckResult{
-		Status:  StatusUnhealthy,
+		Status:  status,
 		Latency: time.Since(start).String(),
 		Error:   fmt.Sprintf(format, args...),
 	}

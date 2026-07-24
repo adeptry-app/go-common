@@ -34,5 +34,6 @@ err := updater.Update(ctx, &model, id)
 ```
 
 `CheckRowsAffected(result)` turns a zero-row delete/update into
-`gorm.ErrRecordNotFound`, and `UpdateEmailStatus` applies the messaging status
-transitions (clears `last_error`, stamps `sent_at`, increments `attempts`).
+`gorm.ErrRecordNotFound`. `UpdateEmailStatus` writes the `lastError` it is given
+(nil clears the column), stamps `sent_at` only for `sent`, and increments
+`attempts` only for `failed`.

@@ -12,7 +12,8 @@ import (
 	"gorm.io/gorm"
 )
 
-// GORM connection pool settings. Match the pgx pool defaults in pgx.go.
+// GORM connection pool settings. Lifetimes match the pgx pool; the sizes are
+// deliberately larger, since pgx callers size their own pools per service.
 const (
 	maxOpenConns    = 25
 	maxIdleConns    = 10

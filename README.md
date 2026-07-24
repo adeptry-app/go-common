@@ -35,6 +35,7 @@ Shared Go package for common code across microservices.
 
 ```go
 import (
+    "log"
     "time"
 
     "github.com/adeptry-app/go-common/config"

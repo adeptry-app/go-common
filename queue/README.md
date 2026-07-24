@@ -7,7 +7,11 @@ confirms.
 ## Publisher Usage
 
 ```go
-import "github.com/adeptry-app/go-common/queue"
+import (
+    "log"
+
+    "github.com/adeptry-app/go-common/queue"
+)
 
 publisher, err := queue.NewRabbitMQPublisher(cfg,
     queue.WithPublisherLogger(appLogger),       // optional, for reconnect logs
@@ -31,7 +35,11 @@ err = publisher.PublishToDLQ(ctx, body, correlationID)
 ## Consumer Usage
 
 ```go
-import "github.com/adeptry-app/go-common/queue"
+import (
+    "log"
+
+    "github.com/adeptry-app/go-common/queue"
+)
 
 consumer, err := queue.NewRabbitMQConsumer(cfg, publisher, logger,
     queue.WithConsumerMetrics(queueMetrics),    // optional Prometheus metrics

@@ -2,7 +2,6 @@ package health
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/minio/minio-go/v7"
@@ -44,11 +43,7 @@ func (c *MinIOChecker) Check(ctx context.Context) CheckResult {
 			return Unhealthy(start, "bucket check failed: %v", err)
 		}
 		if !exists {
-			return CheckResult{
-				Status:  StatusDegraded,
-				Latency: time.Since(start).String(),
-				Error:   fmt.Sprintf("bucket %q does not exist", c.bucket),
-			}
+			return Degraded(start, "bucket %q does not exist", c.bucket)
 		}
 	} else {
 		// Just verify connectivity by listing buckets
