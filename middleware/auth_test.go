@@ -82,11 +82,11 @@ func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
 		t.Fatalf("NewService() error = %v", err)
 	}
 
-	access, err := jwtService.GenerateAccessToken(42, "kaladin", nil)
+	access, err := jwtService.GenerateAccessToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
-	refresh, err := jwtService.GenerateRefreshToken(42, "kaladin", nil)
+	refresh, err := jwtService.GenerateRefreshToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil})
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}

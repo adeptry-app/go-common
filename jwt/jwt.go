@@ -25,25 +25,29 @@ var (
 	ErrEmptyUsername        = errors.New("username cannot be empty")
 )
 
-// Claims represents JWT token claims with user information.
-// Email and EmailVerified are not set by GenerateAccessToken/GenerateRefreshToken.
-// Auth-service populates these fields directly on the Claims struct before signing.
-type Claims struct {
+// Identity is the user a token is issued for. Its fields are inlined into the
+// token payload by the embedding in Claims.
+type Identity struct {
 	UserID        int64             `json:"user_id"`
 	Username      string            `json:"username"`
 	Email         string            `json:"email,omitempty"`
 	EmailVerified bool              `json:"email_verified,omitempty"`
 	DisplayName   string            `json:"display_name,omitempty"`
 	Scopes        map[string]string `json:"scopes,omitempty"`
-	TokenType     string            `json:"token_type"`
+}
+
+// Claims represents JWT token claims with user information.
+type Claims struct {
+	Identity
+	TokenType string `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
 // Service defines JWT token operations.
 type Service interface {
 	ValidateToken(tokenString string) (*Claims, error)
-	GenerateAccessToken(userID int64, username string, scopes map[string]string) (string, error)
-	GenerateRefreshToken(userID int64, username string, scopes map[string]string) (string, error)
+	GenerateAccessToken(id Identity) (string, error)
+	GenerateRefreshToken(id Identity) (string, error)
 	GetAccessExpiry() time.Duration
 	GetRefreshExpiry() time.Duration
 }
@@ -101,43 +105,41 @@ func (s *service) ValidateToken(tokenString string) (*Claims, error) {
 }
 
 // GenerateAccessToken creates a short-lived access token for the given user.
-func (s *service) GenerateAccessToken(userID int64, username string, scopes map[string]string) (string, error) {
+func (s *service) GenerateAccessToken(id Identity) (string, error) {
 	if s.accessExpiry == 0 {
 		return "", ErrTokenGenDisabled
 	}
-	return s.generateToken(userID, username, scopes, s.accessExpiry, TokenTypeAccess)
+	return s.generateToken(id, s.accessExpiry, TokenTypeAccess)
 }
 
 // GenerateRefreshToken creates a long-lived refresh token for the given user.
-func (s *service) GenerateRefreshToken(userID int64, username string, scopes map[string]string) (string, error) {
+func (s *service) GenerateRefreshToken(id Identity) (string, error) {
 	if s.refreshExpiry == 0 {
 		return "", ErrTokenGenDisabled
 	}
-	return s.generateToken(userID, username, scopes, s.refreshExpiry, TokenTypeRefresh)
+	return s.generateToken(id, s.refreshExpiry, TokenTypeRefresh)
 }
 
-func (s *service) generateToken(userID int64, username string, scopes map[string]string, expiry time.Duration, tokenType string) (string, error) {
-	if userID <= 0 {
+func (s *service) generateToken(id Identity, expiry time.Duration, tokenType string) (string, error) {
+	if id.UserID <= 0 {
 		return "", ErrInvalidUserID
 	}
-	if username == "" {
+	if id.Username == "" {
 		return "", ErrEmptyUsername
 	}
 
 	// Defensive copy of scopes map to prevent caller modifications affecting claims
-	var scopesCopy map[string]string
-	if scopes != nil {
-		scopesCopy = make(map[string]string, len(scopes))
-		for k, v := range scopes {
+	if id.Scopes != nil {
+		scopesCopy := make(map[string]string, len(id.Scopes))
+		for k, v := range id.Scopes {
 			scopesCopy[k] = v
 		}
+		id.Scopes = scopesCopy
 	}
 
 	now := time.Now()
 	claims := Claims{
-		UserID:    userID,
-		Username:  username,
-		Scopes:    scopesCopy,
+		Identity:  id,
 		TokenType: tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(expiry)),
