@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.3.0
+
+Breaking: `GenerateAccessToken` / `GenerateRefreshToken` take a `jwt.Identity`
+instead of `(userID, username, scopes)`, and `jwt.Claims` embeds `Identity`
+rather than declaring the identity fields itself. The token payload is
+unchanged (embedded structs are inlined) and `claims.UserID` still resolves,
+but `Claims` literals now need `Identity: jwt.Identity{...}`.
+
+- `jwt.Identity` - the user a token is issued for, including `Email`,
+  `EmailVerified` and `DisplayName`. The generators previously dropped those
+  claims, so auth-service signed its own tokens with a private copy of the
+  factory; one definition now serves both.
+
 ## v0.53.0
 
 Additive release, no breaking API changes.
