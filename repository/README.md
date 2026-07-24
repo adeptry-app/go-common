@@ -38,8 +38,3 @@ err := updater.Update(ctx, &model, id)
 
 `CheckRowsAffected(result)` turns a zero-row delete/update into
 `gorm.ErrRecordNotFound`.
-
-## MarkEmail
-
-`MarkEmail(db, ctx, id, status, lastError)` writes `sent`/`failed`/`retrying`
-via `messaging.mark_email`, which only touches in-flight rows. A no-op returns nil.

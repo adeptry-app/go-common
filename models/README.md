@@ -8,23 +8,13 @@ Shared GORM database models.
 
 - `StorageFile` - File metadata for MinIO storage
 
-### messaging.*
-
-- `Email` - Outbound emails; statuses `pending`, `processing`, `retrying`, `sent`, `failed`
-- `Recipient` - Email recipients for notifications
-- `DeliveryAttempt` - Email delivery tracking
-
 ## Usage
 
 ```go
-import (
-    "fmt"
+import "github.com/adeptry-app/go-common/models"
 
-    "github.com/adeptry-app/go-common/models"
-)
-
-var email models.Email
-db.First(&email, id)
+var file models.StorageFile
+db.First(&file, id)
 ```
 
-Worker status writes go through `repository.MarkEmail`, not a direct update.
+Messaging models live in the messaging repos, not here.
