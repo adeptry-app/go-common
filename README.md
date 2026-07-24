@@ -46,7 +46,6 @@ import (
 )
 
 // Configuration
-cfg := config.NewServiceConfig(8080)
 dbCfg := config.NewDatabaseConfig()
 jwtCfg := config.NewJWTConfig()
 

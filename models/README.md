@@ -18,7 +18,11 @@ Shared GORM database models.
 ## Usage
 
 ```go
-import "github.com/adeptry-app/go-common/models"
+import (
+    "fmt"
+
+    "github.com/adeptry-app/go-common/models"
+)
 
 var email models.Email
 db.First(&email, id)

@@ -36,9 +36,11 @@ err = publisher.PublishToDLQ(ctx, body, correlationID)
 
 ```go
 import (
+    "context"
     "log"
 
     "github.com/adeptry-app/go-common/queue"
+    amqp "github.com/rabbitmq/amqp091-go"
 )
 
 consumer, err := queue.NewRabbitMQConsumer(cfg, publisher, logger,

@@ -7,7 +7,10 @@ Shared database repository implementations.
 Audit log storage:
 
 ```go
-import "github.com/adeptry-app/go-common/repository"
+import (
+    "github.com/adeptry-app/go-common/audit"
+    "github.com/adeptry-app/go-common/repository"
+)
 
 repo := repository.NewActionLogRepository(db)
 
