@@ -18,21 +18,27 @@ claims, err := jwtService.ValidateToken(tokenString)
 userID := claims.UserID
 username := claims.Username
 scopes := claims.Scopes  // map[string]string{"profile": "read", ...}
+tokenType := claims.TokenType  // jwt.TokenTypeAccess or jwt.TokenTypeRefresh
 ttl := claims.GetTTL()
 
-// Generate tokens with scopes (full service only)
-scopes := map[string]string{
-    "profile": "read",
-    "projects": "edit",
-    "users": "delete",
+// Generate tokens (full service only). Scopes and the profile fields are optional.
+identity := jwt.Identity{
+    UserID:        userID,
+    Username:      username,
+    Email:         email,
+    EmailVerified: true,
+    DisplayName:   displayName,
+    Scopes: map[string]string{
+        "profile":  "read",
+        "projects": "edit",
+    },
 }
-accessToken, err := jwtService.GenerateAccessToken(userID, username, scopes)
-refreshToken, err := jwtService.GenerateRefreshToken(userID, username, scopes)
-
-// Generate tokens without scopes
-accessToken, err := jwtService.GenerateAccessToken(userID, username, nil)
-refreshToken, err := jwtService.GenerateRefreshToken(userID, username, nil)
+accessToken, err := jwtService.GenerateAccessToken(identity)
+refreshToken, err := jwtService.GenerateRefreshToken(identity)
 ```
+
+Refresh tokens are only valid at the token endpoint: `middleware.ValidateToken`
+rejects any token whose `TokenType` is not `jwt.TokenTypeAccess`.
 
 ## Benefits
 
