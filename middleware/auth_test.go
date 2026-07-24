@@ -118,3 +118,37 @@ func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestExtractToken(t *testing.T) {
+	tests := []struct {
+		name       string
+		cookie     string
+		authHeader string
+		want       string
+	}{
+		{"cookie preferred over header", "cookie_token", "Bearer header_token", "cookie_token"},
+		{"falls back to header", "", "Bearer header_token", "header_token"},
+		{"lowercase bearer rejected", "", "bearer header_token", ""},
+		{"basic auth rejected", "", "Basic dXNlcjpwYXNz", ""},
+		{"no scheme rejected", "", "just_a_token", ""},
+		{"extra segment rejected", "", "Bearer token extra", ""},
+		{"nothing provided", "", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := newClaimsTestContext()
+			c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+			if tt.cookie != "" {
+				c.Request.AddCookie(&http.Cookie{Name: "access_token", Value: tt.cookie})
+			}
+			if tt.authHeader != "" {
+				c.Request.Header.Set("Authorization", tt.authHeader)
+			}
+
+			if got := ExtractToken(c); got != tt.want {
+				t.Errorf("ExtractToken() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
