@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.4.0
+
+Breaking: `middleware.Claims` / `GetClaims` become `SetIdentity` /
+`GetIdentity(c) (jwt.Identity, bool)`; the gin context keys are unexported.
+Writing them by hand (`c.Set("user_id", ...)`, common in route tests) still
+compiles and now leaves the request unauthenticated.
+
+Needs migration `V20260724120000` - `repository.ActionLog` writes
+`audit.action_log.source`, which never existed, so every audit insert failed.
+
+- `jwt.Service.ValidateAccessToken` / `ValidateRefreshToken` enforce
+  `token_type`, returning `jwt.ErrWrongTokenType`; every call site hand-wrote it.
+- New constants for values that were literals: `middleware.AccessTokenCookie`,
+  `HeaderTokenTTL`, `queue.ComponentPublisher` / `ComponentConsumer`, three
+  `audit.Action*`.
+- Fixed: `AddTTLHeader` ran after `c.Next()` so `X-Token-TTL` never shipped;
+  `database.Connect`'s unquoted DSN truncated passwords containing a space;
+  `RequestLogger` logged `user_id` twice; `RequirePermission` returned 500 for an
+  unusable identity; `GetEnvInt`/`Int64`/`Duration` now panic on malformed input
+  like `GetEnvBool`.
+- `database.Connect` takes `config.DatabaseConfig`; `PostgresConfig` is gone, so
+  the four services drop their translation blocks. TimeZone and the pool sizes
+  are fixed defaults - nobody overrode them.
+- `renderer.SubjectForType` becomes `SubjectFor(emailType, data)`. `contact_form`
+  has no static subject, so the old call returned `("", true)` and both API
+  services stored an empty subject; it now comes from `data["subject"]`.
+- `http_request_duration_seconds` drops its `status` label; dashboards and
+  alerts grouping by it need updating.
+- Removed, no callers: four `ActionLogRepository` query methods, the metrics DB
+  and external-call families, `models.ContactMessage*`, `DeliveryStatusPending`
+  (rejected by the table's CHECK constraint), the `utils` package, and the
+  portfolio/miniatures models.
+
 ## v1.3.0
 
 Breaking: `GenerateAccessToken` / `GenerateRefreshToken` take a `jwt.Identity`

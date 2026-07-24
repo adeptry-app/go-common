@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/adeptry-app/go-common/jwt"
 	"github.com/gin-gonic/gin"
 )
 
@@ -56,8 +57,8 @@ func TestRequirePermission(t *testing.T) {
 
 	tests := []struct {
 		name          string
-		scopes        interface{}
-		scopesExists  bool
+		scopes        map[string]string
+		authenticated bool
 		resource      string
 		requiredLevel string
 		wantStatus    int
@@ -65,28 +66,18 @@ func TestRequirePermission(t *testing.T) {
 		wantNext      bool
 	}{
 		{
-			name:          "no scopes in context",
-			scopesExists:  false,
+			name:          "no identity in context",
+			authenticated: false,
 			resource:      "projects",
 			requiredLevel: "read",
 			wantStatus:    http.StatusUnauthorized,
-			wantError:     "unauthorized",
-			wantNext:      false,
-		},
-		{
-			name:          "invalid scopes format",
-			scopes:        "not a map",
-			scopesExists:  true,
-			resource:      "projects",
-			requiredLevel: "read",
-			wantStatus:    http.StatusInternalServerError,
-			wantError:     "invalid scopes format",
+			wantError:     "unauthorized - no identity",
 			wantNext:      false,
 		},
 		{
 			name:          "sufficient permission - exact match",
 			scopes:        map[string]string{"projects": "read"},
-			scopesExists:  true,
+			authenticated: true,
 			resource:      "projects",
 			requiredLevel: "read",
 			wantStatus:    http.StatusOK,
@@ -95,7 +86,7 @@ func TestRequirePermission(t *testing.T) {
 		{
 			name:          "sufficient permission - higher level",
 			scopes:        map[string]string{"projects": "delete"},
-			scopesExists:  true,
+			authenticated: true,
 			resource:      "projects",
 			requiredLevel: "read",
 			wantStatus:    http.StatusOK,
@@ -104,7 +95,7 @@ func TestRequirePermission(t *testing.T) {
 		{
 			name:          "insufficient permission",
 			scopes:        map[string]string{"projects": "read"},
-			scopesExists:  true,
+			authenticated: true,
 			resource:      "projects",
 			requiredLevel: "edit",
 			wantStatus:    http.StatusForbidden,
@@ -114,7 +105,7 @@ func TestRequirePermission(t *testing.T) {
 		{
 			name:          "resource not in scopes (empty string = none)",
 			scopes:        map[string]string{"profile": "read"},
-			scopesExists:  true,
+			authenticated: true,
 			resource:      "projects",
 			requiredLevel: "read",
 			wantStatus:    http.StatusForbidden,
@@ -124,7 +115,7 @@ func TestRequirePermission(t *testing.T) {
 		{
 			name:          "none level cannot access read",
 			scopes:        map[string]string{"users": "none"},
-			scopesExists:  true,
+			authenticated: true,
 			resource:      "users",
 			requiredLevel: "read",
 			wantStatus:    http.StatusForbidden,
@@ -134,7 +125,7 @@ func TestRequirePermission(t *testing.T) {
 		{
 			name:          "edit can access edit",
 			scopes:        map[string]string{"skills": "edit"},
-			scopesExists:  true,
+			authenticated: true,
 			resource:      "skills",
 			requiredLevel: "edit",
 			wantStatus:    http.StatusOK,
@@ -143,7 +134,7 @@ func TestRequirePermission(t *testing.T) {
 		{
 			name:          "delete can access everything",
 			scopes:        map[string]string{"files": "delete"},
-			scopesExists:  true,
+			authenticated: true,
 			resource:      "files",
 			requiredLevel: "delete",
 			wantStatus:    http.StatusOK,
@@ -157,10 +148,10 @@ func TestRequirePermission(t *testing.T) {
 
 			router := gin.New()
 
-			// Middleware to inject scopes into context
+			// Middleware to inject the authenticated identity into context
 			router.Use(func(c *gin.Context) {
-				if tt.scopesExists {
-					c.Set(CtxKeyScopes, tt.scopes)
+				if tt.authenticated {
+					SetIdentity(c, jwt.Identity{UserID: 1, Username: "kaladin", Scopes: tt.scopes})
 				}
 				c.Next()
 			})
@@ -324,7 +315,7 @@ func TestRequirePermission_ForbiddenResponseDetails(t *testing.T) {
 
 	router := gin.New()
 	router.Use(func(c *gin.Context) {
-		c.Set(CtxKeyScopes, map[string]string{"projects": "read"})
+		SetIdentity(c, jwt.Identity{UserID: 1, Username: "kaladin", Scopes: map[string]string{"projects": "read"}})
 		c.Next()
 	})
 	router.GET("/test", RequirePermission("projects", "delete"))

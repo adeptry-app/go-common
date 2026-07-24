@@ -4,27 +4,39 @@ Shared database repository implementations.
 
 ## ActionLogRepository
 
-Audit log storage and querying:
+Audit log storage:
 
 ```go
-import "github.com/adeptry-app/go-common/repository"
+import (
+    "github.com/adeptry-app/go-common/audit"
+    "github.com/adeptry-app/go-common/repository"
+)
 
 repo := repository.NewActionLogRepository(db)
 
-// Log an action
-err := repo.LogAction(models.ActionLog{
-    Action:     "login_success",
+err := repo.LogAction(&repository.ActionLog{
+    ActionType: audit.ActionLoginSuccess,
     UserID:     &userID,
-    ClientIP:   &clientIP,
+    IPAddress:  &clientIP,
     UserAgent:  &userAgent,
-    Details:    jsonDetails,
+    Source:     &source,
+    Metadata:   jsonMetadata,
 })
-
-// Query logs
-logs, err := repo.GetActionsByType("login_success", 100)
-logs, err := repo.GetActionsByUser(userID, 50)
-logs, err := repo.GetActionsByResource("file", fileID)
-count, err := repo.CountActionsByResource("file", fileID)
 ```
 
 Note: Prefer `audit` package helpers for logging events with automatic context extraction.
+
+## SafeUpdater
+
+Updates that stay idempotent: existence is checked first, so a repeat update of
+an unchanged row is not a 404.
+
+```go
+updater := repository.NewSafeUpdater(db)
+err := updater.Update(ctx, &model, id)
+```
+
+`CheckRowsAffected(result)` turns a zero-row delete/update into
+`gorm.ErrRecordNotFound`. `UpdateEmailStatus` writes the `lastError` it is given
+(nil clears the column), stamps `sent_at` only for `sent`, and increments
+`attempts` only for `failed`.

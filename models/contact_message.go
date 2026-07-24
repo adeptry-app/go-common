@@ -53,17 +53,6 @@ func ValidEmailStatus(s string) bool {
 	return false
 }
 
-// Deprecated: Use Email directly. Will be removed in v1.0.
-type ContactMessage = Email
-
-// Deprecated: Use EmailStatus* constants. Will be removed in v1.0.
-const (
-	MessageStatusPending = EmailStatusPending
-	MessageStatusQueued  = EmailStatusQueued
-	MessageStatusSent    = EmailStatusSent
-	MessageStatusFailed  = EmailStatusFailed
-)
-
 // ContactMessageCreate is the DTO for creating a new contact message (public endpoint)
 type ContactMessageCreate struct {
 	Name     string `json:"name" binding:"required,max=255"`
@@ -82,6 +71,3 @@ func (c *ContactMessageCreate) IsSpam() bool {
 type EmailEvent struct {
 	EmailID int64 `json:"emailId"`
 }
-
-// Deprecated: Use EmailEvent directly. Will be removed in v1.0.
-type ContactMessageEvent = EmailEvent

@@ -70,40 +70,50 @@ func declareExchangeAndQueue(ch *amqp.Channel, exchange, queue string, queueArgs
 // (PRECONDITION_FAILED), so changing RetryDelays for an existing topology
 // requires deleting the retry queues first.
 func declareTopology(ch *amqp.Channel, cfg config.RabbitMQConfig) ([]string, error) {
-	dlxName := cfg.Exchange + "_dlx"
-	dlqName := cfg.Queue + "_dlq"
-
 	// Declare dead letter exchange and queue (permanent failures)
-	if err := declareExchangeAndQueue(ch, dlxName, dlqName, nil); err != nil {
+	if err := declareExchangeAndQueue(ch, dlxName(cfg.Exchange), dlqName(cfg.Queue), nil); err != nil {
 		return nil, err
 	}
 
 	// Declare retry queues with TTL (messages expire and route back to main queue)
 	retryQueues := make([]string, len(cfg.RetryDelays))
 	for i, delay := range cfg.RetryDelays {
-		retryQueueName := fmt.Sprintf("%s_retry_%d", cfg.Queue, i)
-		retryQueues[i] = retryQueueName
+		retryQueues[i] = retryQueueName(cfg.Queue, i)
 
 		retryArgs := amqp.Table{
-			"x-message-ttl":             delay.Milliseconds(),
-			"x-dead-letter-exchange":    cfg.Exchange,
-			"x-dead-letter-routing-key": cfg.Queue,
+			argMessageTTL:       delay.Milliseconds(),
+			argDeadLetterX:      cfg.Exchange,
+			argDeadLetterRouteK: cfg.Queue,
 		}
-		if err := declareExchangeAndQueue(ch, cfg.Exchange, retryQueueName, retryArgs); err != nil {
+		if err := declareExchangeAndQueue(ch, cfg.Exchange, retryQueues[i], retryArgs); err != nil {
 			return nil, err
 		}
 	}
 
 	// Declare main queue (failures route to DLQ if not explicitly retried)
 	mainQueueArgs := amqp.Table{
-		"x-dead-letter-exchange":    dlxName,
-		"x-dead-letter-routing-key": dlqName,
+		argDeadLetterX:      dlxName(cfg.Exchange),
+		argDeadLetterRouteK: dlqName(cfg.Queue),
 	}
 	if err := declareExchangeAndQueue(ch, cfg.Exchange, cfg.Queue, mainQueueArgs); err != nil {
 		return nil, err
 	}
 
 	return retryQueues, nil
+}
+
+// AMQP queue arguments used when declaring the topology.
+const (
+	argMessageTTL       = "x-message-ttl"
+	argDeadLetterX      = "x-dead-letter-exchange"
+	argDeadLetterRouteK = "x-dead-letter-routing-key"
+)
+
+// Wire names the topology declares and consumers look up; one definition each.
+func dlqName(queue string) string    { return queue + "_dlq" }
+func dlxName(exchange string) string { return exchange + "_dlx" }
+func retryQueueName(queue string, i int) string {
+	return fmt.Sprintf("%s_retry_%d", queue, i)
 }
 
 // reconnectDelay returns the backoff delay before reconnect attempt n

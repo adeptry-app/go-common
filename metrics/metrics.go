@@ -14,13 +14,9 @@ const unmatchedPath = "unmatched"
 
 // Metrics holds all Prometheus metrics
 type Metrics struct {
-	RequestsTotal        *prometheus.CounterVec
-	RequestDuration      *prometheus.HistogramVec
-	RequestsInFlight     prometheus.Gauge
-	DBQueriesTotal       *prometheus.CounterVec
-	DBQueryDuration      *prometheus.HistogramVec
-	ExternalCallsTotal   *prometheus.CounterVec
-	ExternalCallDuration *prometheus.HistogramVec
+	RequestsTotal    *prometheus.CounterVec
+	RequestDuration  *prometheus.HistogramVec
+	RequestsInFlight prometheus.Gauge
 }
 
 // Config holds metrics configuration
@@ -56,7 +52,9 @@ func New(cfg Config) *Metrics {
 				Help:      "HTTP request latency in seconds",
 				Buckets:   []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
 			},
-			[]string{"method", "path", "status"},
+			// No status label: RequestsTotal already carries it, and duplicating it
+			// here would make the histogram's _count a copy of that counter.
+			[]string{"method", "path"},
 		),
 
 		RequestsInFlight: promauto.NewGauge(
@@ -67,70 +65,13 @@ func New(cfg Config) *Metrics {
 				Help:      "Current number of HTTP requests being processed",
 			},
 		),
-
-		// Database metrics
-		DBQueriesTotal: promauto.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Subsystem: cfg.ServiceName,
-				Name:      "db_queries_total",
-				Help:      "Total number of database queries",
-			},
-			[]string{"operation", "table", "status"},
-		),
-
-		DBQueryDuration: promauto.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Subsystem: cfg.ServiceName,
-				Name:      "db_query_duration_seconds",
-				Help:      "Database query latency in seconds",
-				Buckets:   []float64{.0001, .0005, .001, .005, .01, .025, .05, .1, .25, .5, 1},
-			},
-			[]string{"operation", "table"},
-		),
-
-		// External API call metrics
-		ExternalCallsTotal: promauto.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Subsystem: cfg.ServiceName,
-				Name:      "external_calls_total",
-				Help:      "Total number of external API calls",
-			},
-			[]string{"service", "endpoint", "status"},
-		),
-
-		ExternalCallDuration: promauto.NewHistogramVec(
-			prometheus.HistogramOpts{
-				Namespace: namespace,
-				Subsystem: cfg.ServiceName,
-				Name:      "external_call_duration_seconds",
-				Help:      "External API call latency in seconds",
-				Buckets:   []float64{.01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
-			},
-			[]string{"service", "endpoint"},
-		),
 	}
 }
 
 // RecordHTTPRequest records HTTP request metrics
 func (m *Metrics) RecordHTTPRequest(method, path string, status int, duration time.Duration) {
-	statusStr := strconv.Itoa(status)
-	m.RequestsTotal.WithLabelValues(method, path, statusStr).Inc()
-	m.RequestDuration.WithLabelValues(method, path, statusStr).Observe(duration.Seconds())
-}
-
-// RecordDBQuery records database query metrics
-func (m *Metrics) RecordDBQuery(operation, table, status string, duration time.Duration) {
-	m.DBQueriesTotal.WithLabelValues(operation, table, status).Inc()
-	m.DBQueryDuration.WithLabelValues(operation, table).Observe(duration.Seconds())
-}
-
-// RecordExternalCall records external API call metrics
-func (m *Metrics) RecordExternalCall(service, endpoint, status string, duration time.Duration) {
-	m.ExternalCallsTotal.WithLabelValues(service, endpoint, status).Inc()
-	m.ExternalCallDuration.WithLabelValues(service, endpoint).Observe(duration.Seconds())
+	m.RequestsTotal.WithLabelValues(method, path, strconv.Itoa(status)).Inc()
+	m.RequestDuration.WithLabelValues(method, path).Observe(duration.Seconds())
 }
 
 // Middleware returns a Gin middleware that records HTTP metrics

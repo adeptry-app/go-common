@@ -37,17 +37,6 @@ func NewSafeUpdater(db *gorm.DB) *SafeUpdater {
 // Uses Select("*") with Updates to include zero-value fields (e.g., bool false).
 // Checks existence first to ensure idempotent updates (no false 404s).
 func (s *SafeUpdater) Update(ctx context.Context, model interface{}, id int64) error {
-	return s.UpdateWithOptions(ctx, model, id, nil)
-}
-
-// UpdateWithAssociations performs safe update with association handling.
-// Use for models with has-many or many-to-many relationships.
-func (s *SafeUpdater) UpdateWithAssociations(ctx context.Context, model interface{}, id int64) error {
-	return s.UpdateWithOptions(ctx, model, id, &gorm.Session{FullSaveAssociations: true})
-}
-
-// UpdateWithOptions is the internal implementation with optional session config.
-func (s *SafeUpdater) UpdateWithOptions(ctx context.Context, model interface{}, id int64, session *gorm.Session) error {
 	// Check existence using COUNT to avoid loading data
 	var count int64
 	if err := s.db.WithContext(ctx).Model(model).Where("id = ?", id).Count(&count).Error; err != nil {
@@ -57,13 +46,7 @@ func (s *SafeUpdater) UpdateWithOptions(ctx context.Context, model interface{}, 
 		return gorm.ErrRecordNotFound
 	}
 
-	// Build update query
 	db := s.db.WithContext(ctx).Model(model).Where("id = ?", id)
-
-	// Apply session options if provided
-	if session != nil {
-		db = db.Session(session)
-	}
 
 	// Now perform update - RowsAffected=0 is OK (idempotent)
 	// Select("*") ensures zero-value fields (like bool false) are included in the update

@@ -27,14 +27,17 @@ Shared Go package for common code across microservices.
 | [logger](logger/) | Structured logging with slog |
 | [metrics](metrics/) | Prometheus metrics collection |
 | [server](server/) | HTTP server with graceful shutdown |
-| [utils](utils/) | Common utility functions |
 | [queue](queue/) | RabbitMQ pub/sub with reconnection, retries, and DLQ |
 | [health](health/) | Dependency health checking |
+| [renderer](renderer/) | HTML email templates and their subjects |
 
 ## Quick Start
 
 ```go
 import (
+    "log"
+    "time"
+
     "github.com/adeptry-app/go-common/config"
     "github.com/adeptry-app/go-common/database"
     "github.com/adeptry-app/go-common/health"
@@ -43,15 +46,19 @@ import (
 )
 
 // Configuration
-cfg := config.NewServiceConfig("8080")
 dbCfg := config.NewDatabaseConfig()
+jwtCfg := config.NewJWTConfig()
 
 // Database
 db, _ := database.Connect(dbCfg)
-defer database.CloseDB(db)
+defer func() {
+    if err := database.CloseDB(db); err != nil {
+        log.Printf("failed to close database: %v", err)
+    }
+}()
 
 // Auth middleware
-jwtService, _ := jwt.NewValidatorOnly(cfg.JWTSecret)
+jwtService, _ := jwt.NewValidatorOnly(jwtCfg.Secret)
 authMiddleware := middleware.NewAuthMiddleware(jwtService)
 
 // Health checks
@@ -80,7 +87,7 @@ task format              # Format code
 
 ## Version
 
-Current version: `v1.0.0`
+Current version: `v1.4.0`
 
 See [CHANGELOG.md](CHANGELOG.md) for breaking changes and migration guides.
 

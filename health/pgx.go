@@ -2,7 +2,6 @@ package health
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,23 +29,12 @@ func (c *PgxChecker) Check(ctx context.Context) CheckResult {
 	start := time.Now()
 
 	if c.pool == nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   "pool is nil",
-		}
+		return Unhealthy(start, "pool is nil")
 	}
 
 	if err := c.pool.Ping(ctx); err != nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   fmt.Sprintf("ping failed: %v", err),
-		}
+		return Unhealthy(start, "ping failed: %v", err)
 	}
 
-	return CheckResult{
-		Status:  StatusHealthy,
-		Latency: time.Since(start).String(),
-	}
+	return Healthy(start)
 }

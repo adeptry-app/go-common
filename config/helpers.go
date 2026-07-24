@@ -2,28 +2,29 @@ package config
 
 import (
 	"fmt"
-	"log"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// unprefixed reads plain environment variables through the same helpers the
+// prefixed (RabbitMQ) loader uses, so both share one set of parsing rules.
+var unprefixed = prefixedEnv{}
+
 // GetEnv returns environment variable value or default if not set
 func GetEnv(key, defaultValue string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return defaultValue
+	return unprefixed.get(key, defaultValue)
 }
 
 // GetEnvRequired returns environment variable value or panics if not set
 func GetEnvRequired(key string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		log.Fatalf("Required environment variable %s is not set", key)
-	}
-	return value
+	return unprefixed.required(key)
+}
+
+// GetEnvRequiredInt returns environment variable as an integer, panicking when
+// it is unset or unparseable.
+func GetEnvRequiredInt(key string) int {
+	return unprefixed.requiredInt(key)
 }
 
 // GetEnvBool returns environment variable as boolean or default if not set
@@ -31,15 +32,7 @@ func GetEnvRequired(key string) string {
 // case-insensitive true/false/1/0 with surrounding whitespace ignored; any
 // other value panics at startup so a typo cannot silently flip a flag.
 func GetEnvBool(key string, defaultValue bool) bool {
-	val := strings.TrimSpace(GetEnv(key, ""))
-	if val == "" {
-		return defaultValue
-	}
-	b, ok := parseBool(val)
-	if !ok {
-		panic(fmt.Sprintf("Invalid boolean value for %s: %q (accepted: true, false, 1, 0)", key, val))
-	}
-	return b
+	return unprefixed.bool(key, defaultValue)
 }
 
 // parseBool interprets the accepted boolean forms: case-insensitive
@@ -56,46 +49,38 @@ func parseBool(val string) (value, ok bool) {
 	return false, false
 }
 
-// GetEnvInt returns environment variable as integer or default if not set
+// GetEnvInt returns environment variable as integer or default if not set.
+// A malformed value panics at startup rather than silently using the default.
 func GetEnvInt(key string, defaultValue int) int {
-	val := GetEnv(key, "")
-	if val == "" {
-		return defaultValue
-	}
-	intVal, err := strconv.Atoi(val)
-	if err != nil {
-		log.Printf("Warning: invalid integer value for %s, using default %d", key, defaultValue)
-		return defaultValue
-	}
-	return intVal
+	return parsedEnv(key, defaultValue, strconv.Atoi)
 }
 
-// GetEnvInt64 returns environment variable as int64 or default if not set
+// GetEnvInt64 returns environment variable as int64 or default if not set.
+// A malformed value panics at startup rather than silently using the default.
 func GetEnvInt64(key string, defaultValue int64) int64 {
-	val := GetEnv(key, "")
-	if val == "" {
-		return defaultValue
-	}
-	intVal, err := strconv.ParseInt(val, 10, 64)
-	if err != nil {
-		log.Printf("Warning: invalid int64 value for %s, using default %d", key, defaultValue)
-		return defaultValue
-	}
-	return intVal
+	return parsedEnv(key, defaultValue, func(s string) (int64, error) {
+		return strconv.ParseInt(s, 10, 64)
+	})
 }
 
 // GetEnvDuration returns environment variable as time.Duration or default if not set.
 // Expected format: Go duration strings (e.g., "15m", "1h30m", "24h", "168h").
 // See https://pkg.go.dev/time#ParseDuration for full format specification.
+// A malformed value panics at startup rather than silently using the default.
 func GetEnvDuration(key string, defaultValue time.Duration) time.Duration {
-	val := GetEnv(key, "")
+	return parsedEnv(key, defaultValue, time.ParseDuration)
+}
+
+// parsedEnv reads key, falling back to defaultValue when unset and panicking
+// when set but unparseable, matching GetEnvBool's fail-loud contract.
+func parsedEnv[T any](key string, defaultValue T, parse func(string) (T, error)) T {
+	val := strings.TrimSpace(GetEnv(key, ""))
 	if val == "" {
 		return defaultValue
 	}
-	duration, err := time.ParseDuration(val)
+	parsed, err := parse(val)
 	if err != nil {
-		log.Printf("Warning: invalid duration value for %s, using default %v", key, defaultValue)
-		return defaultValue
+		panic(fmt.Sprintf("Invalid value for %s: %q (%v)", key, val, err))
 	}
-	return duration
+	return parsed
 }

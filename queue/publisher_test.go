@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/adeptry-app/go-common/config"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
 
 // =============================================================================
@@ -263,31 +262,6 @@ func TestClose_AlreadyClosed(t *testing.T) {
 	err := publisher.Close()
 	if err != nil {
 		t.Errorf("Close() on already closed publisher error = %v, want nil", err)
-	}
-}
-
-// =============================================================================
-// Publishing Message Structure Tests
-// =============================================================================
-
-func TestPublishingDefaults(t *testing.T) {
-	// Test that publish uses correct defaults
-	// These are internal implementation details but important for message handling
-	publishing := amqp.Publishing{
-		DeliveryMode:  amqp.Persistent,
-		ContentType:   "application/json",
-		Body:          []byte(`{"test": "data"}`),
-		Timestamp:     time.Now(),
-		MessageId:     "test-id",
-		CorrelationId: "corr-id",
-		Headers:       nil,
-	}
-
-	if publishing.DeliveryMode != amqp.Persistent {
-		t.Error("Messages should be persistent")
-	}
-	if publishing.ContentType != "application/json" {
-		t.Error("Content type should be application/json")
 	}
 }
 

@@ -16,21 +16,16 @@ type CookieConfig struct {
 
 // NewCookieConfig loads cookie configuration from environment variables.
 func NewCookieConfig() CookieConfig {
-	sameSiteStr := strings.ToLower(GetEnv("COOKIE_SAMESITE", "Lax"))
-	var sameSite http.SameSite
-	switch sameSiteStr {
+	sameSite := http.SameSiteLaxMode
+	switch strings.ToLower(GetEnv("COOKIE_SAMESITE", "Lax")) {
 	case "strict":
 		sameSite = http.SameSiteStrictMode
 	case "none":
 		sameSite = http.SameSiteNoneMode
-	case "lax", "":
-		sameSite = http.SameSiteLaxMode
-	default:
-		sameSite = http.SameSiteLaxMode
 	}
 
 	refreshPath := GetEnv("COOKIE_REFRESH_PATH", "/")
-	if refreshPath == "" || !strings.HasPrefix(refreshPath, "/") {
+	if !strings.HasPrefix(refreshPath, "/") {
 		refreshPath = "/"
 	}
 

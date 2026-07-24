@@ -5,7 +5,11 @@ Local JWT token validation and generation using HS256 signing.
 ## Usage
 
 ```go
-import "github.com/adeptry-app/go-common/jwt"
+import (
+    "time"
+
+    "github.com/adeptry-app/go-common/jwt"
+)
 
 // For services that only validate tokens
 jwtService, err := jwt.NewValidatorOnly(secret)

@@ -29,10 +29,6 @@ func (ActionLog) TableName() string {
 // ActionLogRepository handles action log database operations
 type ActionLogRepository interface {
 	LogAction(log *ActionLog) error
-	GetActionsByType(actionType string, limit int) ([]ActionLog, error)
-	GetActionsByResource(resourceType string, resourceID int64) ([]ActionLog, error)
-	GetActionsByUser(userID int64, limit int) ([]ActionLog, error)
-	CountActionsByResource(resourceType string, resourceID int64) (int64, error)
 }
 
 type actionLogRepository struct {
@@ -50,54 +46,4 @@ func (r *actionLogRepository) LogAction(log *ActionLog) error {
 		return fmt.Errorf("failed to create action log: %w", err)
 	}
 	return nil
-}
-
-// GetActionsByType retrieves actions by type
-func (r *actionLogRepository) GetActionsByType(actionType string, limit int) ([]ActionLog, error) {
-	var logs []ActionLog
-	err := r.db.Where("action_type = ?", actionType).
-		Order("created_at DESC").
-		Limit(limit).
-		Find(&logs).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get actions by type %s: %w", actionType, err)
-	}
-	return logs, nil
-}
-
-// GetActionsByResource retrieves actions for a specific resource
-func (r *actionLogRepository) GetActionsByResource(resourceType string, resourceID int64) ([]ActionLog, error) {
-	var logs []ActionLog
-	err := r.db.Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).
-		Order("created_at DESC").
-		Find(&logs).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get actions by resource %s:%d: %w", resourceType, resourceID, err)
-	}
-	return logs, nil
-}
-
-// GetActionsByUser retrieves actions by a specific user
-func (r *actionLogRepository) GetActionsByUser(userID int64, limit int) ([]ActionLog, error) {
-	var logs []ActionLog
-	err := r.db.Where("user_id = ?", userID).
-		Order("created_at DESC").
-		Limit(limit).
-		Find(&logs).Error
-	if err != nil {
-		return nil, fmt.Errorf("failed to get actions by user %d: %w", userID, err)
-	}
-	return logs, nil
-}
-
-// CountActionsByResource counts actions for a specific resource
-func (r *actionLogRepository) CountActionsByResource(resourceType string, resourceID int64) (int64, error) {
-	var count int64
-	err := r.db.Model(&ActionLog{}).
-		Where("resource_type = ? AND resource_id = ?", resourceType, resourceID).
-		Count(&count).Error
-	if err != nil {
-		return 0, fmt.Errorf("failed to count actions by resource %s:%d: %w", resourceType, resourceID, err)
-	}
-	return count, nil
 }

@@ -9,6 +9,10 @@ import (
 	"github.com/google/uuid"
 )
 
+// ctxKeyLogger is the gin key holding the request-scoped logger; GetLogger is
+// the only reader.
+const ctxKeyLogger = "logger"
+
 // RequestLogger returns a Gin middleware that logs HTTP requests with structured logging
 func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -16,13 +20,13 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 		start := time.Now()
 
 		// Generate request ID
-		requestID := c.GetHeader("X-Request-ID")
+		requestID := c.GetHeader(HeaderRequestID)
 		if requestID == "" {
 			requestID = uuid.New().String()
 		}
 
 		// Get correlation ID from header (for cross-service tracing)
-		correlationID := c.GetHeader("X-Correlation-ID")
+		correlationID := c.GetHeader(HeaderCorrelationID)
 		if correlationID == "" {
 			correlationID = requestID // Use request ID if no correlation ID provided
 		}
@@ -33,11 +37,12 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 		c.Request = c.Request.WithContext(ctx)
 
 		// Add request ID to response headers
-		c.Header("X-Request-ID", requestID)
-		c.Header("X-Correlation-ID", correlationID)
+		c.Header(HeaderRequestID, requestID)
+		c.Header(HeaderCorrelationID, correlationID)
 
 		// Store logger in context for handlers to use
-		c.Set("logger", WithContext(ctx, logger))
+		requestLogger := WithContext(ctx, logger)
+		c.Set(ctxKeyLogger, requestLogger)
 
 		// Process request
 		c.Next()
@@ -63,14 +68,10 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 			attrs = append(attrs, "query", c.Request.URL.RawQuery)
 		}
 
-		// Add user ID if authenticated
-		if userID, exists := c.Get(middleware.CtxKeyUserID); exists {
-			attrs = append(attrs, "user_id", userID)
-			// Also add to context for future use
-			if uid, ok := userID.(int64); ok {
-				ctx = AddUserID(ctx, uid)
-				c.Request = c.Request.WithContext(ctx)
-			}
+		// Add user ID if authenticated. Not added to ctx: the request is over,
+		// so WithContext below would only duplicate the attribute.
+		if id, ok := middleware.GetIdentity(c); ok {
+			attrs = append(attrs, "user_id", id.UserID)
 		}
 
 		// Add error if present
@@ -79,23 +80,21 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 		}
 
 		// Log with appropriate level based on status code
-		logWithContext := WithContext(ctx, logger)
 		if status >= 500 {
-			logWithContext.Error("HTTP request failed", attrs...)
+			requestLogger.Error("HTTP request failed", attrs...)
 		} else if status >= 400 {
-			logWithContext.Warn("HTTP request client error", attrs...)
+			requestLogger.Warn("HTTP request client error", attrs...)
 		} else {
-			logWithContext.Info("HTTP request completed", attrs...)
+			requestLogger.Info("HTTP request completed", attrs...)
 		}
 	}
 }
 
 // GetLogger retrieves the logger from Gin context
 func GetLogger(c *gin.Context) *slog.Logger {
-	if logger, exists := c.Get("logger"); exists {
-		if l, ok := logger.(*slog.Logger); ok {
-			return l
-		}
+	v, _ := c.Get(ctxKeyLogger)
+	if l, ok := v.(*slog.Logger); ok {
+		return l
 	}
 	// Fallback to default logger
 	return slog.Default()

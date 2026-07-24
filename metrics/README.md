@@ -5,7 +5,11 @@ Prometheus metrics collection with Gin middleware.
 ## Usage
 
 ```go
-import "github.com/adeptry-app/go-common/metrics"
+import (
+    "github.com/adeptry-app/go-common/metrics"
+    "github.com/gin-gonic/gin"
+    "github.com/prometheus/client_golang/prometheus/promhttp"
+)
 
 metricsCollector := metrics.New(metrics.Config{
     ServiceName: "admin",

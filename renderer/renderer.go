@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"fmt"
 	"html/template"
+	"strings"
 
 	"github.com/adeptry-app/go-common/models"
 	"github.com/adeptry-app/go-common/renderer/templates"
@@ -44,15 +45,19 @@ func init() {
 	}
 }
 
-// SubjectForType returns the static subject line for an email type.
-// The bool indicates whether the type exists in the registry.
-// Some types (e.g. contact_form) have no static subject — callers supply it.
-func SubjectForType(emailType string) (string, bool) {
+// SubjectFor returns the subject line for an email type. Types with no static
+// subject (contact_form) take it from data["subject"], which Render requires
+// anyway. ok is false for an unknown type or a missing user-supplied subject.
+func SubjectFor(emailType string, data map[string]string) (string, bool) {
 	meta, ok := typeRegistry[emailType]
 	if !ok {
 		return "", false
 	}
-	return meta.Subject, true
+	if meta.Subject != "" {
+		return meta.Subject, true
+	}
+	subject := strings.TrimSpace(data["subject"])
+	return subject, subject != ""
 }
 
 // Render renders an email template with the given data.

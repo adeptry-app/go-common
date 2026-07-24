@@ -10,6 +10,12 @@ const (
 	OutcomeRequeued = "requeued" // message requeued without consuming a retry attempt (shutdown)
 )
 
+// Components reported to MetricsRecorder.RecordReconnect.
+const (
+	ComponentPublisher = "publisher"
+	ComponentConsumer  = "consumer"
+)
+
 // MetricsRecorder receives queue events for instrumentation. Implementations
 // must be safe for concurrent use and must not panic - recorder calls run on
 // the publish and consume paths and, unlike message handlers, are not

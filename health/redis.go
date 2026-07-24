@@ -2,7 +2,6 @@ package health
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -28,23 +27,12 @@ func (c *RedisChecker) Check(ctx context.Context) CheckResult {
 	start := time.Now()
 
 	if c.client == nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   "client is nil",
-		}
+		return Unhealthy(start, "client is nil")
 	}
 
 	if err := c.client.Ping(ctx).Err(); err != nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   fmt.Sprintf("ping failed: %v", err),
-		}
+		return Unhealthy(start, "ping failed: %v", err)
 	}
 
-	return CheckResult{
-		Status:  StatusHealthy,
-		Latency: time.Since(start).String(),
-	}
+	return Healthy(start)
 }

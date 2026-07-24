@@ -11,11 +11,14 @@ import "github.com/adeptry-app/go-common/audit"
 router.Use(audit.ContextMiddleware())
 
 // 2. Log events in handlers
-audit.LogFromContext(c, actionLogRepo, audit.ActionLoginSuccess, nil, nil,
+source := "auth-service"
+audit.LogFromContext(c, actionLogRepo, audit.ActionLoginSuccess, nil, nil, &source,
     map[string]interface{}{"username": username})
 ```
 
-Automatically extracts: Client IP, User-Agent, user_id from context.
+Automatically extracts: Client IP, User-Agent, user_id from context. The user ID
+comes from `middleware.GetIdentity`, so it is only populated on routes behind
+`AuthMiddleware.ValidateToken`; elsewhere pass it explicitly with `LogAction`.
 
 ## Action Types
 
@@ -25,6 +28,9 @@ audit.ActionLoginFailure
 audit.ActionLogout
 audit.ActionTokenRefresh
 audit.ActionTokenValidation
+audit.ActionTokenReuse
+audit.ActionRegistrationSuccess
+audit.ActionRegistrationFailure
 audit.ActionFileUpload
 audit.ActionFileDownload
 audit.ActionFileDelete

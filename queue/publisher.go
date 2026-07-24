@@ -61,12 +61,12 @@ func (p *RabbitMQPublisher) RetryQueues() []string {
 
 // DLQName returns the dead letter queue name
 func (p *RabbitMQPublisher) DLQName() string {
-	return p.cfg.Queue + "_dlq"
+	return dlqName(p.cfg.Queue)
 }
 
 // DLXName returns the dead letter exchange name
 func (p *RabbitMQPublisher) DLXName() string {
-	return p.cfg.Exchange + "_dlx"
+	return dlxName(p.cfg.Exchange)
 }
 
 // NewRabbitMQPublisher creates a new RabbitMQ publisher with exchange, retry queues, and DLQ.
@@ -170,7 +170,7 @@ func (p *RabbitMQPublisher) supervise(conn *amqp.Connection, ch *amqp.Channel) {
 			"queue", p.cfg.Queue,
 			"reason", closeError(reason),
 		)
-		p.metrics.RecordReconnect("publisher")
+		p.metrics.RecordReconnect(ComponentPublisher)
 
 		newConn, newCh, ok := p.reconnect()
 		if !ok {
@@ -264,7 +264,7 @@ func (p *RabbitMQPublisher) doPublish(ctx context.Context, exchange, routingKey 
 	p.mu.Lock()
 	if p.closed {
 		p.mu.Unlock()
-		return fmt.Errorf("%w", ErrPublisherClosed)
+		return ErrPublisherClosed
 	}
 	// Registered under the lock so Close cannot start tearing down between
 	// the closed check and the publish.
@@ -293,7 +293,7 @@ func (p *RabbitMQPublisher) doPublish(ctx context.Context, exchange, routingKey 
 			return fmt.Errorf("%w: confirm wait: %v", ErrPublishFailed, err)
 		}
 		if !acked {
-			return fmt.Errorf("%w", ErrPublishNotConfirmed)
+			return ErrPublishNotConfirmed
 		}
 	}
 	return nil

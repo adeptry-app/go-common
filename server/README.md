@@ -5,7 +5,11 @@ HTTP server utilities with graceful shutdown.
 ## Usage
 
 ```go
-import "github.com/adeptry-app/go-common/server"
+import (
+    "log"
+
+    "github.com/adeptry-app/go-common/server"
+)
 
 cfg := server.DefaultConfig("8080")
 if err := server.Run(router, cfg, logger); err != nil {

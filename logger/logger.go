@@ -17,8 +17,12 @@ const (
 	RequestIDKey ContextKey = "request_id"
 	// CorrelationIDKey is the context key for correlation ID
 	CorrelationIDKey ContextKey = "correlation_id"
-	// UserIDKey is the context key for user ID
-	UserIDKey ContextKey = "user_id"
+)
+
+// Header names carrying the tracing IDs across services.
+const (
+	HeaderRequestID     = "X-Request-ID"
+	HeaderCorrelationID = "X-Correlation-ID"
 )
 
 // Config holds logger configuration
@@ -90,10 +94,6 @@ func WithContext(ctx context.Context, logger *slog.Logger) *slog.Logger {
 		attrs = append(attrs, "correlation_id", correlationID)
 	}
 
-	if userID := ctx.Value(UserIDKey); userID != nil {
-		attrs = append(attrs, "user_id", userID)
-	}
-
 	if len(attrs) > 0 {
 		return logger.With(attrs...)
 	}
@@ -116,37 +116,14 @@ func AddCorrelationID(ctx context.Context, correlationID string) context.Context
 	return context.WithValue(ctx, CorrelationIDKey, correlationID)
 }
 
-// AddUserID adds user ID to context
-func AddUserID(ctx context.Context, userID int64) context.Context {
-	return context.WithValue(ctx, UserIDKey, userID)
-}
-
 // GetRequestID retrieves request ID from context
 func GetRequestID(ctx context.Context) string {
-	if requestID := ctx.Value(RequestIDKey); requestID != nil {
-		if id, ok := requestID.(string); ok {
-			return id
-		}
-	}
-	return ""
+	id, _ := ctx.Value(RequestIDKey).(string)
+	return id
 }
 
 // GetCorrelationID retrieves correlation ID from context
 func GetCorrelationID(ctx context.Context) string {
-	if correlationID := ctx.Value(CorrelationIDKey); correlationID != nil {
-		if id, ok := correlationID.(string); ok {
-			return id
-		}
-	}
-	return ""
-}
-
-// GetUserID retrieves user ID from context
-func GetUserID(ctx context.Context) int64 {
-	if userID := ctx.Value(UserIDKey); userID != nil {
-		if id, ok := userID.(int64); ok {
-			return id
-		}
-	}
-	return 0
+	id, _ := ctx.Value(CorrelationIDKey).(string)
+	return id
 }
