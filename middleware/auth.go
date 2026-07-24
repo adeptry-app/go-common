@@ -59,7 +59,7 @@ func NewAuthMiddleware(jwtService jwt.Service) *AuthMiddleware {
 // ValidateToken returns a Gin middleware that validates JWT tokens locally
 func (m *AuthMiddleware) ValidateToken() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token := extractToken(c)
+		token := ExtractToken(c)
 		if token == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - no token provided"})
 			c.Abort()
@@ -126,7 +126,9 @@ func (m *AuthMiddleware) AddTTLHeader() gin.HandlerFunc {
 	}
 }
 
-func extractToken(c *gin.Context) string {
+// ExtractToken returns the caller's raw JWT, preferring the access token cookie
+// over the Authorization header. Also used to forward the token between services.
+func ExtractToken(c *gin.Context) string {
 	// Try cookie first (browser requests)
 	if cookie, err := c.Cookie("access_token"); err == nil && cookie != "" {
 		return cookie
