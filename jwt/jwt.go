@@ -8,6 +8,13 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// Token types distinguish what a token may be used for. Refresh tokens are only
+// valid at the token endpoint; everything else requires an access token.
+const (
+	TokenTypeAccess  = "access"
+	TokenTypeRefresh = "refresh"
+)
+
 // Common errors returned by the JWT service.
 var (
 	ErrSecretTooShort       = errors.New("JWT secret must be at least 32 bytes (256 bits)")
@@ -28,6 +35,7 @@ type Claims struct {
 	EmailVerified bool              `json:"email_verified,omitempty"`
 	DisplayName   string            `json:"display_name,omitempty"`
 	Scopes        map[string]string `json:"scopes,omitempty"`
+	TokenType     string            `json:"token_type"`
 	jwt.RegisteredClaims
 }
 
@@ -97,7 +105,7 @@ func (s *service) GenerateAccessToken(userID int64, username string, scopes map[
 	if s.accessExpiry == 0 {
 		return "", ErrTokenGenDisabled
 	}
-	return s.generateToken(userID, username, scopes, s.accessExpiry)
+	return s.generateToken(userID, username, scopes, s.accessExpiry, TokenTypeAccess)
 }
 
 // GenerateRefreshToken creates a long-lived refresh token for the given user.
@@ -105,10 +113,10 @@ func (s *service) GenerateRefreshToken(userID int64, username string, scopes map
 	if s.refreshExpiry == 0 {
 		return "", ErrTokenGenDisabled
 	}
-	return s.generateToken(userID, username, scopes, s.refreshExpiry)
+	return s.generateToken(userID, username, scopes, s.refreshExpiry, TokenTypeRefresh)
 }
 
-func (s *service) generateToken(userID int64, username string, scopes map[string]string, expiry time.Duration) (string, error) {
+func (s *service) generateToken(userID int64, username string, scopes map[string]string, expiry time.Duration, tokenType string) (string, error) {
 	if userID <= 0 {
 		return "", ErrInvalidUserID
 	}
@@ -127,9 +135,10 @@ func (s *service) generateToken(userID int64, username string, scopes map[string
 
 	now := time.Now()
 	claims := Claims{
-		UserID:   userID,
-		Username: username,
-		Scopes:   scopesCopy,
+		UserID:    userID,
+		Username:  username,
+		Scopes:    scopesCopy,
+		TokenType: tokenType,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(now.Add(expiry)),
 			IssuedAt:  jwt.NewNumericDate(now),

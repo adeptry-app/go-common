@@ -1,9 +1,12 @@
 package middleware
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/adeptry-app/go-common/jwt"
 	"github.com/gin-gonic/gin"
 )
 
@@ -67,6 +70,50 @@ func TestGetClaims_NotAuthenticated(t *testing.T) {
 			tt.set(c)
 			if _, ok := GetClaims(c); ok {
 				t.Error("GetClaims() ok = true, want false")
+			}
+		})
+	}
+}
+
+func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
+	const secret = "test-secret-key-at-least-32-bytes-long"
+	jwtService, err := jwt.NewService(secret, 15*time.Minute, 24*time.Hour)
+	if err != nil {
+		t.Fatalf("NewService() error = %v", err)
+	}
+
+	access, err := jwtService.GenerateAccessToken(42, "kaladin", nil)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+	refresh, err := jwtService.GenerateRefreshToken(42, "kaladin", nil)
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		token      string
+		wantStatus int
+	}{
+		{"access token", access, http.StatusOK},
+		{"refresh token", refresh, http.StatusUnauthorized},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			w := httptest.NewRecorder()
+			router := gin.New()
+			router.Use(NewAuthMiddleware(jwtService).ValidateToken())
+			router.GET("/heroes", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			req := httptest.NewRequest(http.MethodGet, "/heroes", nil)
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+			router.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
 			}
 		})
 	}
