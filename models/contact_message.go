@@ -36,18 +36,20 @@ const (
 	EmailType2FACode           = "2fa_code"
 )
 
-// Email status constants
+// Email status constants. Claimable states are pending and retrying; the
+// sweeper recovers rows stuck in either, plus processing rows whose worker died.
 const (
-	EmailStatusPending = "pending"
-	EmailStatusQueued  = "queued"
-	EmailStatusSent    = "sent"
-	EmailStatusFailed  = "failed"
+	EmailStatusPending    = "pending"
+	EmailStatusProcessing = "processing"
+	EmailStatusRetrying   = "retrying"
+	EmailStatusSent       = "sent"
+	EmailStatusFailed     = "failed"
 )
 
 // ValidEmailStatus reports whether s is a known email status value.
 func ValidEmailStatus(s string) bool {
 	switch s {
-	case EmailStatusPending, EmailStatusQueued, EmailStatusSent, EmailStatusFailed:
+	case EmailStatusPending, EmailStatusProcessing, EmailStatusRetrying, EmailStatusSent, EmailStatusFailed:
 		return true
 	}
 	return false

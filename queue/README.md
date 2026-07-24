@@ -68,9 +68,37 @@ retryCount := queue.GetRetryCount(delivery)
 finalAttempt := !queue.WillRetry(delivery, publisher.MaxRetries())
 ```
 
+## Stale Row Recovery
+
+At-least-once delivery still loses work when the publish itself fails after
+the row is committed, or when a worker dies mid-job. `StaleSweeper` closes
+that gap: it periodically asks the database which rows are stranded and
+re-publishes them, making the row (not the message) the source of truth.
+
+```go
+sweeper := queue.StaleSweeper{
+    Sweep: func(ctx context.Context) ([]int64, error) {
+        return repo.SweepStaleEmails(ctx, cfg.Sweeper)
+    },
+    Event:     func(id int64) any { return models.EmailEvent{EmailID: id} },
+    Publisher: publisher,
+    Kind:      "email",
+    Interval:  cfg.Sweeper.Interval,
+    Logger:    appLogger,
+}
+go sweeper.Run(ctx) // blocks until ctx is cancelled
+```
+
+`Sweep` is expected to fail rows past the attempt budget itself and return
+only the ids worth re-publishing, so the attempt ceiling lives in one place
+alongside the claim. Pair it with an atomic claim in the handler: the sweeper
+guarantees at-least-once recovery, the claim keeps duplicate deliveries from
+doing the work twice. Tune with `config.SweeperConfig`.
+
 ## Features
 
 - Automatic exchange and queue declaration
+- Stale row recovery via `StaleSweeper`
 - Automatic reconnection with exponential backoff (publisher and consumer)
 - Configurable retry delays with TTL-based routing and optional jitter
 - Dead letter queue for permanent failures
