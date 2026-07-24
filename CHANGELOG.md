@@ -30,7 +30,7 @@ Needs migration `V20260724120000` - `repository.ActionLog` writes
   alerts grouping by it need updating.
 - Removed, no callers: four `ActionLogRepository` query methods, the metrics DB
   and external-call families, `models.ContactMessage*`, `DeliveryStatusPending`
-  (rejected by the table's CHECK constraint), the `utils` package, and the
+  (absent from the table's CHECK constraint), the `utils` package, and the
   portfolio/miniatures models.
 
 ## v1.3.0
