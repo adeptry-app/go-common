@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -1181,6 +1182,36 @@ func TestGenerateToken_TokenType(t *testing.T) {
 	}
 	if refreshClaims.TokenType != TokenTypeRefresh {
 		t.Errorf("refresh TokenType = %q, want %q", refreshClaims.TokenType, TokenTypeRefresh)
+	}
+}
+
+func TestValidateTyped_RejectsTheOtherTokenType(t *testing.T) {
+	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	id := Identity{UserID: 1, Username: "testuser", Scopes: nil}
+
+	access, err := svc.GenerateAccessToken(id)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+	refresh, err := svc.GenerateRefreshToken(id)
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
+
+	if _, err := svc.ValidateAccessToken(access); err != nil {
+		t.Errorf("ValidateAccessToken(access) error = %v", err)
+	}
+	if _, err := svc.ValidateRefreshToken(refresh); err != nil {
+		t.Errorf("ValidateRefreshToken(refresh) error = %v", err)
+	}
+	if _, err := svc.ValidateAccessToken(refresh); !errors.Is(err, ErrWrongTokenType) {
+		t.Errorf("ValidateAccessToken(refresh) error = %v, want %v", err, ErrWrongTokenType)
+	}
+	if _, err := svc.ValidateRefreshToken(access); !errors.Is(err, ErrWrongTokenType) {
+		t.Errorf("ValidateRefreshToken(access) error = %v, want %v", err, ErrWrongTokenType)
+	}
+	if _, err := svc.ValidateAccessToken("not-a-token"); errors.Is(err, ErrWrongTokenType) {
+		t.Error("a malformed token must fail validation, not the type check")
 	}
 }
 

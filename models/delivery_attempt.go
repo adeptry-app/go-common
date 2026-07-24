@@ -17,9 +17,8 @@ func (DeliveryAttempt) TableName() string {
 	return "messaging.delivery_attempts"
 }
 
-// DeliveryAttemptStatus constants
+// DeliveryAttemptStatus constants. The table's CHECK constraint allows these two only.
 const (
 	DeliveryStatusSuccess = "success"
 	DeliveryStatusFailed  = "failed"
-	DeliveryStatusPending = "pending"
 )

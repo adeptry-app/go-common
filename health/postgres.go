@@ -2,7 +2,6 @@ package health
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -28,32 +27,17 @@ func (c *PostgresChecker) Check(ctx context.Context) CheckResult {
 	start := time.Now()
 
 	if c.db == nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   "database is nil",
-		}
+		return Unhealthy(start, "database is nil")
 	}
 
 	sqlDB, err := c.db.DB()
 	if err != nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   fmt.Sprintf("failed to get database instance: %v", err),
-		}
+		return Unhealthy(start, "failed to get database instance: %v", err)
 	}
 
 	if err := sqlDB.PingContext(ctx); err != nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   fmt.Sprintf("ping failed: %v", err),
-		}
+		return Unhealthy(start, "ping failed: %v", err)
 	}
 
-	return CheckResult{
-		Status:  StatusHealthy,
-		Latency: time.Since(start).String(),
-	}
+	return Healthy(start)
 }

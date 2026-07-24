@@ -3,6 +3,8 @@ package jwt
 
 import (
 	"errors"
+	"fmt"
+	"maps"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -23,6 +25,7 @@ var (
 	ErrTokenGenDisabled     = errors.New("token generation not configured")
 	ErrInvalidUserID        = errors.New("user ID must be positive")
 	ErrEmptyUsername        = errors.New("username cannot be empty")
+	ErrWrongTokenType       = errors.New("wrong token type")
 )
 
 // Identity is the user a token is issued for. Its fields are inlined into the
@@ -43,9 +46,14 @@ type Claims struct {
 	jwt.RegisteredClaims
 }
 
-// Service defines JWT token operations.
+// Service defines JWT token operations. Prefer ValidateAccessToken /
+// ValidateRefreshToken over ValidateToken: a token is only usable for the
+// purpose it was minted for, and forgetting that check accepts a long-lived
+// refresh token as a session.
 type Service interface {
 	ValidateToken(tokenString string) (*Claims, error)
+	ValidateAccessToken(tokenString string) (*Claims, error)
+	ValidateRefreshToken(tokenString string) (*Claims, error)
 	GenerateAccessToken(id Identity) (string, error)
 	GenerateRefreshToken(id Identity) (string, error)
 	GetAccessExpiry() time.Duration
@@ -104,6 +112,27 @@ func (s *service) ValidateToken(tokenString string) (*Claims, error) {
 	return nil, ErrInvalidToken
 }
 
+// ValidateAccessToken parses a token and rejects anything but an access token.
+func (s *service) ValidateAccessToken(tokenString string) (*Claims, error) {
+	return s.validateTyped(tokenString, TokenTypeAccess)
+}
+
+// ValidateRefreshToken parses a token and rejects anything but a refresh token.
+func (s *service) ValidateRefreshToken(tokenString string) (*Claims, error) {
+	return s.validateTyped(tokenString, TokenTypeRefresh)
+}
+
+func (s *service) validateTyped(tokenString, want string) (*Claims, error) {
+	claims, err := s.ValidateToken(tokenString)
+	if err != nil {
+		return nil, err
+	}
+	if claims.TokenType != want {
+		return nil, fmt.Errorf("%w: got %q, want %q", ErrWrongTokenType, claims.TokenType, want)
+	}
+	return claims, nil
+}
+
 // GenerateAccessToken creates a short-lived access token for the given user.
 func (s *service) GenerateAccessToken(id Identity) (string, error) {
 	if s.accessExpiry == 0 {
@@ -129,13 +158,7 @@ func (s *service) generateToken(id Identity, expiry time.Duration, tokenType str
 	}
 
 	// Defensive copy of scopes map to prevent caller modifications affecting claims
-	if id.Scopes != nil {
-		scopesCopy := make(map[string]string, len(id.Scopes))
-		for k, v := range id.Scopes {
-			scopesCopy[k] = v
-		}
-		id.Scopes = scopesCopy
-	}
+	id.Scopes = maps.Clone(id.Scopes)
 
 	now := time.Now()
 	claims := Claims{

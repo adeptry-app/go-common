@@ -170,7 +170,7 @@ func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) 
 
 	defer func() {
 		wg.Wait()
-		c.teardown()
+		_ = c.teardown()
 		c.mu.Lock()
 		c.consuming = false
 		c.mu.Unlock()
@@ -232,11 +232,11 @@ func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) 
 				return ErrDeliveryChannelClosed
 			}
 			c.logger.Warn("Delivery channel closed, reconnecting", "queue", c.config.Queue)
-			c.metrics.RecordReconnect("consumer")
+			c.metrics.RecordReconnect(ComponentConsumer)
 			// Let in-flight handlers finish before tearing down the channel
 			// they ack on.
 			wg.Wait()
-			c.teardown()
+			_ = c.teardown()
 		}
 	}
 }
@@ -250,7 +250,7 @@ func (c *RabbitMQConsumer) setupConsume() (<-chan amqp.Delivery, error) {
 	c.mu.Unlock()
 
 	if conn == nil || conn.IsClosed() {
-		c.teardown()
+		_ = c.teardown()
 		newConn, err := dial(c.config)
 		if err != nil {
 			return nil, err
@@ -555,15 +555,14 @@ func (c *RabbitMQConsumer) Connection() *amqp.Connection {
 	return c.conn
 }
 
-// teardown closes and clears the current channel and connection, ignoring
-// errors (used during reconnects and final cleanup).
-func (c *RabbitMQConsumer) teardown() {
+// teardown closes and clears the current channel and connection.
+func (c *RabbitMQConsumer) teardown() error {
 	c.mu.Lock()
 	ch, conn := c.channel, c.conn
 	c.channel, c.conn = nil, nil
 	c.mu.Unlock()
 
-	_ = closeResources(ch, conn)
+	return closeResources(ch, conn)
 }
 
 // Close stops consuming and closes the connection. If a Consume call is
@@ -595,12 +594,7 @@ func (c *RabbitMQConsumer) Close() error {
 		<-runDone
 	}
 
-	c.mu.Lock()
-	ch, conn := c.channel, c.conn
-	c.channel, c.conn = nil, nil
-	c.mu.Unlock()
-
-	if err := closeResources(ch, conn); err != nil {
+	if err := c.teardown(); err != nil {
 		return fmt.Errorf("%w: %w", ErrCloseFailed, err)
 	}
 	return nil

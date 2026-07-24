@@ -40,9 +40,6 @@ func (m *mockChecker) Check(ctx context.Context) CheckResult {
 func TestNewAggregator(t *testing.T) {
 	agg := NewAggregator(5 * time.Second)
 
-	if agg == nil {
-		t.Fatal("expected aggregator to not be nil")
-	}
 	if agg.timeout != 5*time.Second {
 		t.Errorf("expected timeout 5s, got %v", agg.timeout)
 	}

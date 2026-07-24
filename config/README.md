@@ -8,7 +8,7 @@ Configuration management with validation and environment variable helpers.
 import "github.com/adeptry-app/go-common/config"
 
 // Service configuration
-cfg := config.NewServiceConfig("8080")
+cfg := config.NewServiceConfig(8080)
 
 // Database configuration
 dbCfg := config.NewDatabaseConfig()
@@ -48,7 +48,7 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 ### DatabaseConfig
 
 - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` - Required
-- `DB_SSLMODE` - Optional (disable, require, verify-ca, verify-full)
+- `DB_SSLMODE` - Optional (disable, allow, prefer, require, verify-ca, verify-full)
 
 ### RedisConfig
 

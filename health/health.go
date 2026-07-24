@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -27,6 +28,21 @@ type CheckResult struct {
 	Latency string         `json:"latency,omitempty"`
 	Error   string         `json:"error,omitempty"`
 	Details map[string]any `json:"details,omitempty"`
+}
+
+// Healthy builds a passing result, timing it from start. Checkers use this so
+// Latency is always populated.
+func Healthy(start time.Time) CheckResult {
+	return CheckResult{Status: StatusHealthy, Latency: time.Since(start).String()}
+}
+
+// Unhealthy builds a failing result with a formatted reason, timed from start.
+func Unhealthy(start time.Time, format string, args ...any) CheckResult {
+	return CheckResult{
+		Status:  StatusUnhealthy,
+		Latency: time.Since(start).String(),
+		Error:   fmt.Sprintf(format, args...),
+	}
 }
 
 // Checker is the interface for health check implementations

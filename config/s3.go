@@ -19,12 +19,18 @@ type S3Config struct {
 	AvatarsBucket    string // Bucket for hero/character avatar images
 }
 
+// Env vars whose names appear in both the loader and its diagnostics.
+const (
+	envS3AccessKey = "S3_ACCESS_KEY"
+	envS3SecretKey = "S3_SECRET_KEY" // #nosec G101 -- env var name, not a credential
+)
+
 // NewS3Config loads S3 configuration from environment variables
 func NewS3Config() S3Config {
 	cfg := S3Config{
 		Endpoint:         GetEnvRequired("S3_ENDPOINT"),
-		AccessKey:        GetEnv("S3_ACCESS_KEY", ""), // Optional for IAM role authentication
-		SecretKey:        GetEnv("S3_SECRET_KEY", ""), // Optional for IAM role authentication
+		AccessKey:        GetEnv(envS3AccessKey, ""), // Optional for IAM role authentication
+		SecretKey:        GetEnv(envS3SecretKey, ""), // Optional for IAM role authentication
 		UseSSL:           GetEnvBool("S3_USE_SSL", false),
 		ImagesBucket:     GetEnv("S3_IMAGES_BUCKET", "images"),               // Default for local MinIO
 		DocumentsBucket:  GetEnv("S3_DOCUMENTS_BUCKET", "documents"),         // Default for local MinIO
@@ -42,7 +48,7 @@ func NewS3Config() S3Config {
 	hasAccessKey := cfg.AccessKey != ""
 	hasSecretKey := cfg.SecretKey != ""
 	if hasAccessKey != hasSecretKey {
-		panic("S3_ACCESS_KEY and S3_SECRET_KEY must both be provided or both be empty")
+		panic(fmt.Sprintf("%s and %s must both be provided or both be empty", envS3AccessKey, envS3SecretKey))
 	}
 
 	return cfg

@@ -46,25 +46,14 @@ func (c *RabbitMQChecker) Check(_ context.Context) CheckResult {
 
 	conn := c.provider()
 	if conn == nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   "connection is nil",
-		}
+		return Unhealthy(start, "connection is nil")
 	}
 
 	if conn.IsClosed() {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   "connection is closed",
-		}
+		return Unhealthy(start, "connection is closed")
 	}
 
-	return CheckResult{
-		Status:  StatusHealthy,
-		Latency: time.Since(start).String(),
-	}
+	return Healthy(start)
 }
 
 // QueueDepthChecker reports the number of messages in a queue (typically a
@@ -105,22 +94,14 @@ func (c *QueueDepthChecker) Check(_ context.Context) CheckResult {
 
 	conn := c.provider()
 	if conn == nil || conn.IsClosed() {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   "connection unavailable",
-		}
+		return Unhealthy(start, "connection unavailable")
 	}
 
 	// A short-lived channel per check keeps the checker independent of the
 	// owner's channel lifecycle.
 	ch, err := conn.Channel()
 	if err != nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   fmt.Sprintf("open channel: %v", err),
-		}
+		return Unhealthy(start, "open channel: %v", err)
 	}
 	defer func() { _ = ch.Close() }()
 
@@ -128,18 +109,11 @@ func (c *QueueDepthChecker) Check(_ context.Context) CheckResult {
 	// the server ignores the flags and only checks existence.
 	queue, err := ch.QueueDeclarePassive(c.queue, true, false, false, false, nil)
 	if err != nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   fmt.Sprintf("inspect queue: %v", err),
-		}
+		return Unhealthy(start, "inspect queue: %v", err)
 	}
 
-	result := CheckResult{
-		Status:  StatusHealthy,
-		Latency: time.Since(start).String(),
-		Details: map[string]any{"messages": queue.Messages},
-	}
+	result := Healthy(start)
+	result.Details = map[string]any{"messages": queue.Messages}
 	if c.degradedThreshold > 0 && queue.Messages >= c.degradedThreshold {
 		result.Status = StatusDegraded
 		result.Error = fmt.Sprintf("queue depth %d reached threshold %d", queue.Messages, c.degradedThreshold)

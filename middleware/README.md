@@ -24,23 +24,25 @@ protected.Use(authMiddleware.AddTTLHeader())
 
 The middleware extracts JWT tokens in the following order:
 
-1. **Cookie** (httpOnly `access_token` cookie) - for browser requests
+1. **Cookie** (httpOnly `access_token`, exported as
+   `middleware.AccessTokenCookie`) - for browser requests
 2. **Authorization header** (`Bearer <token>`) - for service-to-service calls
 
-This allows secure httpOnly cookie authentication for browsers while maintaining
-backwards compatibility with Authorization header for API clients.
+Writers of the cookie must use `middleware.AccessTokenCookie` so the name has a
+single definition across services.
 
-After validation, access user info in handlers:
+`ValidateToken` accepts access tokens only; a refresh token is rejected with
+401. After validation, access the token subject in handlers:
 
 ```go
-claims, ok := middleware.GetClaims(c)
-// claims.UserID int64, claims.Username string,
-// claims.DisplayName string, claims.Scopes map[string]string
+id, ok := middleware.GetIdentity(c)
+// jwt.Identity: UserID, Username, Email, EmailVerified, DisplayName, Scopes
 ```
 
-The stored keys (`middleware.CtxKeyUserID` etc., including `CtxKeyTokenTTL`,
-which GetClaims does not expose) are unchanged, so existing direct `c.Get`
-callers keep working.
+The gin context keys are unexported, so `SetIdentity` / `GetIdentity` are the
+only way in and out. Tests that need an authenticated request call
+`middleware.SetIdentity(c, jwt.Identity{UserID: 1, Scopes: ...})` rather than
+setting a key by hand.
 
 ## SecurityMiddleware
 

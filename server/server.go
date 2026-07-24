@@ -29,16 +29,27 @@ type Config struct {
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig(port string) Config {
-	if port == "" {
-		port = "8080"
+	return Config{Port: port}.withDefaults()
+}
+
+// withDefaults fills zero fields; the sole definition of the documented defaults.
+func (c Config) withDefaults() Config {
+	if c.Port == "" {
+		c.Port = "8080"
 	}
-	return Config{
-		Port:            port,
-		ShutdownTimeout: 30 * time.Second,
-		ReadTimeout:     30 * time.Second,
-		WriteTimeout:    30 * time.Second,
-		IdleTimeout:     120 * time.Second,
+	if c.ShutdownTimeout == 0 {
+		c.ShutdownTimeout = 30 * time.Second
 	}
+	if c.ReadTimeout == 0 {
+		c.ReadTimeout = 30 * time.Second
+	}
+	if c.WriteTimeout == 0 {
+		c.WriteTimeout = 30 * time.Second
+	}
+	if c.IdleTimeout == 0 {
+		c.IdleTimeout = 120 * time.Second
+	}
+	return c
 }
 
 // Run starts an HTTP server with graceful shutdown support.
@@ -57,34 +68,14 @@ func Run(handler http.Handler, cfg Config, logger *slog.Logger) error {
 		logger = slog.Default()
 	}
 
-	// Apply defaults for zero values
-	port := cfg.Port
-	if port == "" {
-		port = "8080"
-	}
-	shutdownTimeout := cfg.ShutdownTimeout
-	if shutdownTimeout == 0 {
-		shutdownTimeout = 30 * time.Second
-	}
-	readTimeout := cfg.ReadTimeout
-	if readTimeout == 0 {
-		readTimeout = 30 * time.Second
-	}
-	writeTimeout := cfg.WriteTimeout
-	if writeTimeout == 0 {
-		writeTimeout = 30 * time.Second
-	}
-	idleTimeout := cfg.IdleTimeout
-	if idleTimeout == 0 {
-		idleTimeout = 120 * time.Second
-	}
+	cfg = cfg.withDefaults()
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%s", port),
+		Addr:         fmt.Sprintf(":%s", cfg.Port),
 		Handler:      handler,
-		ReadTimeout:  readTimeout,
-		WriteTimeout: writeTimeout,
-		IdleTimeout:  idleTimeout,
+		ReadTimeout:  cfg.ReadTimeout,
+		WriteTimeout: cfg.WriteTimeout,
+		IdleTimeout:  cfg.IdleTimeout,
 	}
 
 	// Channel to receive shutdown signals
@@ -111,11 +102,11 @@ func Run(handler http.Handler, cfg Config, logger *slog.Logger) error {
 	}
 
 	// Create context with timeout for shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	// Attempt graceful shutdown
-	logger.Info("Shutting down server", "timeout", shutdownTimeout.String())
+	logger.Info("Shutting down server", "timeout", cfg.ShutdownTimeout.String())
 	if err := srv.Shutdown(ctx); err != nil {
 		return fmt.Errorf("server shutdown error: %w", err)
 	}

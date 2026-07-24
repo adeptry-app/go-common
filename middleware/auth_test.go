@@ -10,66 +10,62 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func newClaimsTestContext() *gin.Context {
+func newIdentityTestContext() *gin.Context {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	return c
 }
 
-func TestGetClaims_FullSet(t *testing.T) {
-	c := newClaimsTestContext()
-	c.Set(CtxKeyUserID, int64(42))
-	c.Set(CtxKeyUsername, "kaladin")
-	c.Set(CtxKeyDisplayName, "Kaladin Stormblessed")
-	c.Set(CtxKeyScopes, map[string]string{"heroes": "edit"})
+func TestGetIdentity_FullSet(t *testing.T) {
+	c := newIdentityTestContext()
+	SetIdentity(c, jwt.Identity{
+		UserID:      42,
+		Username:    "kaladin",
+		Email:       "kaladin@bridgefour.com",
+		DisplayName: "Kaladin Stormblessed",
+		Scopes:      map[string]string{"heroes": "edit"},
+	})
 
-	claims, ok := GetClaims(c)
+	id, ok := GetIdentity(c)
 	if !ok {
-		t.Fatal("GetClaims() ok = false, want true")
+		t.Fatal("GetIdentity() ok = false, want true")
 	}
-	if claims.UserID != 42 {
-		t.Errorf("UserID = %d, want 42", claims.UserID)
+	if id.UserID != 42 {
+		t.Errorf("UserID = %d, want 42", id.UserID)
 	}
-	if claims.Username != "kaladin" {
-		t.Errorf("Username = %q, want %q", claims.Username, "kaladin")
+	if id.Username != "kaladin" {
+		t.Errorf("Username = %q, want %q", id.Username, "kaladin")
 	}
-	if claims.DisplayName != "Kaladin Stormblessed" {
-		t.Errorf("DisplayName = %q, want %q", claims.DisplayName, "Kaladin Stormblessed")
+	if id.Email != "kaladin@bridgefour.com" {
+		t.Errorf("Email = %q, want %q", id.Email, "kaladin@bridgefour.com")
 	}
-	if claims.Scopes["heroes"] != "edit" {
-		t.Errorf("Scopes = %v, want heroes:edit", claims.Scopes)
+	if id.DisplayName != "Kaladin Stormblessed" {
+		t.Errorf("DisplayName = %q, want %q", id.DisplayName, "Kaladin Stormblessed")
+	}
+	if id.Scopes["heroes"] != "edit" {
+		t.Errorf("Scopes = %v, want heroes:edit", id.Scopes)
 	}
 }
 
-func TestGetClaims_UserIDIsTheSentinel(t *testing.T) {
-	c := newClaimsTestContext()
-	c.Set(CtxKeyUserID, int64(1))
-
-	claims, ok := GetClaims(c)
-	if !ok {
-		t.Fatal("GetClaims() ok = false, want true")
-	}
-	if claims.Username != "" || claims.DisplayName != "" || claims.Scopes != nil {
-		t.Errorf("claims = %+v, want zero fields besides UserID", claims)
-	}
-}
-
-func TestGetClaims_NotAuthenticated(t *testing.T) {
+func TestGetIdentity_NotAuthenticated(t *testing.T) {
 	tests := []struct {
 		name string
 		set  func(*gin.Context)
 	}{
 		{"nothing set", func(_ *gin.Context) {}},
-		{"wrong user_id type", func(c *gin.Context) {
-			c.Set(CtxKeyUserID, "1")
+		{"wrong type", func(c *gin.Context) {
+			c.Set(ctxKeyIdentity, "kaladin")
+		}},
+		{"unusable user id", func(c *gin.Context) {
+			SetIdentity(c, jwt.Identity{Username: "kaladin"})
 		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := newClaimsTestContext()
+			c := newIdentityTestContext()
 			tt.set(c)
-			if _, ok := GetClaims(c); ok {
-				t.Error("GetClaims() ok = true, want false")
+			if _, ok := GetIdentity(c); ok {
+				t.Error("GetIdentity() ok = true, want false")
 			}
 		})
 	}
@@ -137,10 +133,10 @@ func TestExtractToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c := newClaimsTestContext()
+			c := newIdentityTestContext()
 			c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
 			if tt.cookie != "" {
-				c.Request.AddCookie(&http.Cookie{Name: "access_token", Value: tt.cookie})
+				c.Request.AddCookie(&http.Cookie{Name: AccessTokenCookie, Value: tt.cookie})
 			}
 			if tt.authHeader != "" {
 				c.Request.Header.Set("Authorization", tt.authHeader)

@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -20,14 +19,9 @@ type DatabaseConfig struct {
 // NewDatabaseConfig loads database configuration from environment variables.
 // It panics if required environment variables are missing or configuration is invalid.
 func NewDatabaseConfig() DatabaseConfig {
-	port, err := strconv.Atoi(GetEnvRequired("DB_PORT"))
-	if err != nil {
-		panic(fmt.Sprintf("Invalid DB_PORT: %v", err))
-	}
-
 	cfg := DatabaseConfig{
 		Host:     GetEnvRequired("DB_HOST"),
-		Port:     port,
+		Port:     GetEnvRequiredInt("DB_PORT"),
 		User:     GetEnvRequired("DB_USER"),
 		Password: GetEnvRequired("DB_PASSWORD"),
 		Name:     GetEnvRequired("DB_NAME"),

@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -18,14 +17,9 @@ type RedisConfig struct {
 // NewRedisConfig loads Redis configuration from environment variables.
 // It panics if required environment variables are missing or configuration is invalid.
 func NewRedisConfig() RedisConfig {
-	port, err := strconv.Atoi(GetEnvRequired("REDIS_PORT"))
-	if err != nil {
-		panic(fmt.Sprintf("Invalid REDIS_PORT: %v", err))
-	}
-
 	cfg := RedisConfig{
 		Host:     GetEnvRequired("REDIS_HOST"),
-		Port:     port,
+		Port:     GetEnvRequiredInt("REDIS_PORT"),
 		Password: GetEnv("REDIS_PASSWORD", ""),
 		TLS:      GetEnvBool("REDIS_TLS", false),
 	}

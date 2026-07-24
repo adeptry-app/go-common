@@ -1,47 +1,49 @@
 package middleware
 
 import (
-	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/adeptry-app/go-common/jwt"
 	"github.com/gin-gonic/gin"
 )
 
-// Gin context keys for the values ValidateToken stores.
+// AccessTokenCookie carries the access token on browser requests. ExtractToken
+// reads it; the auth service writes it.
+const AccessTokenCookie = "access_token"
+
+// HeaderTokenTTL carries the access token's remaining lifetime in seconds.
+const HeaderTokenTTL = "X-Token-TTL" // #nosec G101 -- header name, not a credential
+
+// Gin context keys for the values ValidateToken stores. Unexported so the
+// accessors below are the only way in or out.
 const (
-	CtxKeyTokenTTL    = "token_ttl"
-	CtxKeyUserID      = "user_id"
-	CtxKeyUsername    = "username"
-	CtxKeyDisplayName = "display_name"
-	CtxKeyScopes      = "scopes"
+	ctxKeyTokenTTL = "token_ttl"
+	ctxKeyIdentity = "identity"
 )
 
-// Claims is the session identity ValidateToken stores on the gin context.
-// Treat Scopes as read-only; it is the stored map, not a copy.
-type Claims struct {
-	UserID      int64
-	Username    string
-	DisplayName string
-	Scopes      map[string]string
+// SetIdentity marks the request as authenticated for the given subject. Only
+// ValidateToken needs this in production; tests use it to stand in for a token.
+func SetIdentity(c *gin.Context, id jwt.Identity) {
+	c.Set(ctxKeyIdentity, id)
 }
 
-// GetClaims returns the identity stored by ValidateToken. ok is false when
-// the auth middleware did not run.
-func GetClaims(c *gin.Context) (Claims, bool) {
-	v, exists := c.Get(CtxKeyUserID)
-	uid, ok := v.(int64)
-	if !exists || !ok {
-		return Claims{}, false
+// GetIdentity returns the token subject stored by SetIdentity. ok is false when
+// the auth middleware did not run. Treat Scopes as read-only; it is the stored
+// map, not a copy.
+func GetIdentity(c *gin.Context) (jwt.Identity, bool) {
+	v, _ := c.Get(ctxKeyIdentity)
+	if id, ok := v.(jwt.Identity); ok && id.UserID > 0 {
+		return id, true
 	}
-	return Claims{
-		UserID:      uid,
-		Username:    c.GetString(CtxKeyUsername),
-		DisplayName: c.GetString(CtxKeyDisplayName),
-		Scopes:      c.GetStringMapString(CtxKeyScopes),
-	}, true
+	return jwt.Identity{}, false
+}
+
+// abortUnauthorized ends the request with the 401 envelope every service returns.
+func abortUnauthorized(c *gin.Context, reason string) {
+	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - " + reason})
 }
 
 // AuthMiddleware provides JWT token validation
@@ -61,31 +63,18 @@ func (m *AuthMiddleware) ValidateToken() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := ExtractToken(c)
 		if token == "" {
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - no token provided"})
-			c.Abort()
+			abortUnauthorized(c, "no token provided")
 			return
 		}
 
-		// Validate token locally
-		claims, err := m.jwtService.ValidateToken(token)
+		// Validate locally; refresh tokens are only valid at the token endpoint
+		claims, err := m.jwtService.ValidateAccessToken(token)
 		if err != nil {
 			slog.Warn("token validation failed",
 				"error", err,
 				"path", c.Request.URL.Path,
 			)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - invalid token"})
-			c.Abort()
-			return
-		}
-
-		// Refresh tokens are only valid at the auth service token endpoint
-		if claims.TokenType != jwt.TokenTypeAccess {
-			slog.Warn("rejected non-access token",
-				"token_type", claims.TokenType,
-				"path", c.Request.URL.Path,
-			)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - invalid token"})
-			c.Abort()
+			abortUnauthorized(c, "invalid token")
 			return
 		}
 
@@ -95,34 +84,28 @@ func (m *AuthMiddleware) ValidateToken() gin.HandlerFunc {
 			slog.Warn("token expired",
 				"path", c.Request.URL.Path,
 			)
-			c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - token expired"})
-			c.Abort()
+			abortUnauthorized(c, "token expired")
 			return
 		}
 
-		// Store TTL and user claims in context for downstream handlers
-		c.Set(CtxKeyTokenTTL, ttl)
-		c.Set(CtxKeyUserID, claims.UserID)
-		c.Set(CtxKeyUsername, claims.Username)
-		c.Set(CtxKeyDisplayName, claims.DisplayName)
-		c.Set(CtxKeyScopes, claims.Scopes)
+		// Store TTL and the token subject for downstream handlers
+		c.Set(ctxKeyTokenTTL, ttl)
+		SetIdentity(c, claims.Identity)
 
 		c.Next()
 	}
 }
 
-// AddTTLHeader returns a middleware that adds X-Token-TTL header to responses
-// This should be added after ValidateToken middleware
+// AddTTLHeader returns a middleware that adds X-Token-TTL header to responses.
+// Must be added after ValidateToken; the header is written before the handler
+// runs because gin flushes the header map on the first body write.
 func (m *AuthMiddleware) AddTTLHeader() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Next()
-
-		// After request processing, add TTL header if available in context
-		if ttl, exists := c.Get(CtxKeyTokenTTL); exists {
-			if ttlValue, ok := ttl.(int64); ok && ttlValue > 0 {
-				c.Header("X-Token-TTL", fmt.Sprintf("%d", ttlValue))
-			}
+		v, _ := c.Get(ctxKeyTokenTTL)
+		if ttl, ok := v.(int64); ok && ttl > 0 {
+			c.Header(HeaderTokenTTL, strconv.FormatInt(ttl, 10))
 		}
+		c.Next()
 	}
 }
 
@@ -130,7 +113,7 @@ func (m *AuthMiddleware) AddTTLHeader() gin.HandlerFunc {
 // over the Authorization header. Also used to forward the token between services.
 func ExtractToken(c *gin.Context) string {
 	// Try cookie first (browser requests)
-	if cookie, err := c.Cookie("access_token"); err == nil && cookie != "" {
+	if cookie, err := c.Cookie(AccessTokenCookie); err == nil && cookie != "" {
 		return cookie
 	}
 

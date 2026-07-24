@@ -17,10 +17,7 @@ func UpdateEmailStatus(db *gorm.DB, ctx context.Context, id int64, status string
 
 	updates := map[string]interface{}{
 		"status":     status,
-		"last_error": nil,
-	}
-	if lastError != nil {
-		updates["last_error"] = *lastError
+		"last_error": lastError,
 	}
 	if status == models.EmailStatusSent {
 		updates["sent_at"] = db.NowFunc()

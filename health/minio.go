@@ -34,22 +34,14 @@ func (c *MinIOChecker) Check(ctx context.Context) CheckResult {
 	start := time.Now()
 
 	if c.client == nil {
-		return CheckResult{
-			Status:  StatusUnhealthy,
-			Latency: time.Since(start).String(),
-			Error:   "client is nil",
-		}
+		return Unhealthy(start, "client is nil")
 	}
 
 	if c.bucket != "" {
 		// Check if specific bucket exists
 		exists, err := c.client.BucketExists(ctx, c.bucket)
 		if err != nil {
-			return CheckResult{
-				Status:  StatusUnhealthy,
-				Latency: time.Since(start).String(),
-				Error:   fmt.Sprintf("bucket check failed: %v", err),
-			}
+			return Unhealthy(start, "bucket check failed: %v", err)
 		}
 		if !exists {
 			return CheckResult{
@@ -62,16 +54,9 @@ func (c *MinIOChecker) Check(ctx context.Context) CheckResult {
 		// Just verify connectivity by listing buckets
 		_, err := c.client.ListBuckets(ctx)
 		if err != nil {
-			return CheckResult{
-				Status:  StatusUnhealthy,
-				Latency: time.Since(start).String(),
-				Error:   fmt.Sprintf("list buckets failed: %v", err),
-			}
+			return Unhealthy(start, "list buckets failed: %v", err)
 		}
 	}
 
-	return CheckResult{
-		Status:  StatusHealthy,
-		Latency: time.Since(start).String(),
-	}
+	return Healthy(start)
 }

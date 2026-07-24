@@ -168,10 +168,19 @@ func (e prefixedEnv) get(key, defaultValue string) string {
 	return defaultValue
 }
 
+// name is the variable to blame in diagnostics: both forms when a prefix is
+// set, the plain key otherwise (the un-prefixed helpers in helpers.go).
+func (e prefixedEnv) name(key string) string {
+	if e.prefix == "" {
+		return key
+	}
+	return fmt.Sprintf("%s%s (or %s)", e.prefix, key, key)
+}
+
 func (e prefixedEnv) required(key string) string {
 	v, _ := e.lookup(key)
 	if v == "" {
-		panic(fmt.Sprintf("Required environment variable %s%s (or %s) is not set", e.prefix, key, key))
+		panic(fmt.Sprintf("Required environment variable %s is not set", e.name(key)))
 	}
 	return v
 }
@@ -179,7 +188,7 @@ func (e prefixedEnv) required(key string) string {
 func (e prefixedEnv) requiredInt(key string) int {
 	v, varName := e.lookup(key)
 	if v == "" {
-		panic(fmt.Sprintf("Required environment variable %s%s (or %s) is not set", e.prefix, key, key))
+		panic(fmt.Sprintf("Required environment variable %s is not set", e.name(key)))
 	}
 	intVal, err := strconv.Atoi(v)
 	if err != nil {

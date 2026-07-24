@@ -3,7 +3,6 @@ package audit
 
 import (
 	"encoding/json"
-	"strings"
 
 	"github.com/adeptry-app/go-common/logger"
 	"github.com/adeptry-app/go-common/middleware"
@@ -17,16 +16,20 @@ const (
 	contextKeyUserAgent = "audit_user_agent"
 )
 
-// Action types for audit logging
+// Action types for audit logging. These are persisted into action_log.action_type
+// and read back by tooling, so callers must use these rather than literals.
 const (
-	ActionLoginSuccess    = "login_success"
-	ActionLoginFailure    = "login_failure"
-	ActionLogout          = "logout"
-	ActionTokenRefresh    = "token_refresh"
-	ActionTokenValidation = "token_validation_failure"
-	ActionFileUpload      = "file_upload"
-	ActionFileDownload    = "file_download"
-	ActionFileDelete      = "file_delete"
+	ActionLoginSuccess        = "login_success"
+	ActionLoginFailure        = "login_failure"
+	ActionLogout              = "logout"
+	ActionTokenRefresh        = "token_refresh"
+	ActionTokenValidation     = "token_validation_failure"
+	ActionTokenReuse          = "token_reuse_detected" // #nosec G101 -- action name, not a credential
+	ActionRegistrationSuccess = "registration_success"
+	ActionRegistrationFailure = "registration_failure"
+	ActionFileUpload          = "file_upload"
+	ActionFileDownload        = "file_download"
+	ActionFileDelete          = "file_delete"
 )
 
 // Resource types
@@ -53,70 +56,49 @@ func ContextMiddleware() gin.HandlerFunc {
 	}
 }
 
-// extractClientIP gets IP address from request headers or remote address
+// extractClientIP gets the client IP, honouring the proxy headers gin trusts.
 func extractClientIP(c *gin.Context) *string {
-	// Try X-Forwarded-For first (for requests through Traefik/proxy)
-	ip := c.GetHeader("X-Forwarded-For")
-	if ip != "" {
-		// X-Forwarded-For can be a comma-separated list, take the first IP
-		if idx := strings.Index(ip, ","); idx > 0 {
-			ip = strings.TrimSpace(ip[:idx])
-		}
-		return &ip
-	}
-
-	// Fall back to X-Real-IP
-	ip = c.GetHeader("X-Real-IP")
-	if ip != "" {
-		return &ip
-	}
-
-	// Fall back to remote address
-	ip = c.ClientIP()
-	if ip != "" {
-		return &ip
-	}
-
-	return nil
+	return optional(c.ClientIP())
 }
 
 // extractUserAgent gets user agent from request headers
 func extractUserAgent(c *gin.Context) *string {
-	ua := c.GetHeader("User-Agent")
-	if ua != "" {
-		return &ua
+	return optional(c.GetHeader("User-Agent"))
+}
+
+// optional maps an empty string to a nil column value.
+func optional(s string) *string {
+	if s == "" {
+		return nil
 	}
-	return nil
+	return &s
+}
+
+// stored returns the value ContextMiddleware cached, falling back to extracting
+// it directly when the middleware did not run.
+func stored(c *gin.Context, key string, extract func(*gin.Context) *string) *string {
+	if v, ok := c.Get(key); ok {
+		if s, ok := v.(*string); ok {
+			return s
+		}
+	}
+	return extract(c)
 }
 
 // GetClientIP retrieves client IP from context (set by ContextMiddleware)
 func GetClientIP(c *gin.Context) *string {
-	if ip, exists := c.Get(contextKeyClientIP); exists {
-		if ipStr, ok := ip.(*string); ok {
-			return ipStr
-		}
-	}
-	// Fallback to direct extraction if middleware not used
-	return extractClientIP(c)
+	return stored(c, contextKeyClientIP, extractClientIP)
 }
 
 // GetUserAgent retrieves user agent from context (set by ContextMiddleware)
 func GetUserAgent(c *gin.Context) *string {
-	if ua, exists := c.Get(contextKeyUserAgent); exists {
-		if uaStr, ok := ua.(*string); ok {
-			return uaStr
-		}
-	}
-	// Fallback to direct extraction if middleware not used
-	return extractUserAgent(c)
+	return stored(c, contextKeyUserAgent, extractUserAgent)
 }
 
 // GetUserID retrieves user ID from context (set by auth middleware after token validation)
 func GetUserID(c *gin.Context) *int64 {
-	if userID, exists := c.Get(middleware.CtxKeyUserID); exists {
-		if id, ok := userID.(int64); ok {
-			return &id
-		}
+	if id, ok := middleware.GetIdentity(c); ok {
+		return &id.UserID
 	}
 	return nil
 }
@@ -125,41 +107,7 @@ func GetUserID(c *gin.Context) *int64 {
 // This is the recommended way to log audit events - requires ContextMiddleware
 // Errors are logged internally and not returned to avoid blocking business operations
 func LogFromContext(c *gin.Context, repo repository.ActionLogRepository, actionType string, resourceType *string, resourceID *int64, source *string, metadata map[string]interface{}) error {
-	var metadataJSON json.RawMessage
-	if metadata != nil {
-		bytes, err := json.Marshal(metadata)
-		if err != nil {
-			logger.GetLogger(c).Error("Failed to marshal audit metadata",
-				"error", err,
-				"action_type", actionType,
-			)
-			return err
-		}
-		metadataJSON = bytes
-	}
-
-	actionLog := &repository.ActionLog{
-		ActionType:   actionType,
-		ResourceType: resourceType,
-		ResourceID:   resourceID,
-		UserID:       GetUserID(c),
-		IPAddress:    GetClientIP(c),
-		UserAgent:    GetUserAgent(c),
-		Source:       source,
-		Metadata:     metadataJSON,
-	}
-
-	if err := repo.LogAction(actionLog); err != nil {
-		logger.GetLogger(c).Error("Failed to log audit action",
-			"error", err,
-			"action_type", actionType,
-			"resource_type", resourceType,
-			"resource_id", resourceID,
-		)
-		return err
-	}
-
-	return nil
+	return LogAction(c, repo, actionType, resourceType, resourceID, GetUserID(c), source, metadata)
 }
 
 // LogAction is a helper that logs an action with explicit user ID and source
