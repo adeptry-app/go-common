@@ -37,6 +37,9 @@ err := updater.Update(ctx, &model, id)
 ```
 
 `CheckRowsAffected(result)` turns a zero-row delete/update into
-`gorm.ErrRecordNotFound`. `UpdateEmailStatus` writes the `lastError` it is given
-(nil clears the column) and stamps `sent_at` only for `sent`. It does not touch
-`attempts`: `messaging.claim_email` owns that counter.
+`gorm.ErrRecordNotFound`.
+
+## MarkEmail
+
+`MarkEmail(db, ctx, id, status, lastError)` writes `sent`/`failed`/`retrying`
+via `messaging.mark_email`, which only touches in-flight rows. A no-op returns nil.

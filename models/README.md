@@ -10,10 +10,7 @@ Shared GORM database models.
 
 ### messaging.*
 
-- `Email` - Outbound emails with status tracking (`ContactMessageCreate` is the
-  public submission DTO, `EmailEvent` the queue payload). Statuses are
-  `pending`, `processing`, `retrying`, `sent`, `failed`; `pending` and
-  `retrying` are the claimable ones.
+- `Email` - Outbound emails; statuses `pending`, `processing`, `retrying`, `sent`, `failed`
 - `Recipient` - Email recipients for notifications
 - `DeliveryAttempt` - Email delivery tracking
 
@@ -28,8 +25,6 @@ import (
 
 var email models.Email
 db.First(&email, id)
-
-if !models.ValidEmailStatus(status) {
-    return fmt.Errorf("invalid email status: %q", status)
-}
 ```
+
+Worker status writes go through `repository.MarkEmail`, not a direct update.

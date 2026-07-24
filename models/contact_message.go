@@ -46,15 +46,6 @@ const (
 	EmailStatusFailed     = "failed"
 )
 
-// ValidEmailStatus reports whether s is a known email status value.
-func ValidEmailStatus(s string) bool {
-	switch s {
-	case EmailStatusPending, EmailStatusProcessing, EmailStatusRetrying, EmailStatusSent, EmailStatusFailed:
-		return true
-	}
-	return false
-}
-
 // ContactMessageCreate is the DTO for creating a new contact message (public endpoint)
 type ContactMessageCreate struct {
 	Name     string `json:"name" binding:"required,max=255"`

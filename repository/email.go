@@ -8,26 +8,16 @@ import (
 	"gorm.io/gorm"
 )
 
-// UpdateEmailStatus updates the status of an email record. last_error is set to
-// lastError as given (nil clears it) and sent_at is stamped only for the sent
-// status. attempts belongs to messaging.claim_email, which owns the counter.
-func UpdateEmailStatus(db *gorm.DB, ctx context.Context, id int64, status string, lastError *string) error {
-	if !models.ValidEmailStatus(status) {
-		return fmt.Errorf("invalid email status: %q", status)
+// MarkEmail writes a worker status through messaging.mark_email, which only
+// touches in-flight rows so a slow worker cannot overwrite a row the sweeper
+// already abandoned. A no-op (row gone or terminal) is not an error.
+func MarkEmail(db *gorm.DB, ctx context.Context, id int64, status string, lastError *string) error {
+	switch status {
+	case models.EmailStatusSent, models.EmailStatusFailed, models.EmailStatusRetrying:
+	default:
+		return fmt.Errorf("invalid worker email status: %q", status)
 	}
 
-	updates := map[string]interface{}{
-		"status":     status,
-		"last_error": lastError,
-	}
-	if status == models.EmailStatusSent {
-		updates["sent_at"] = db.NowFunc()
-	}
-
-	result := db.WithContext(ctx).
-		Model(&models.Email{}).
-		Where("id = ?", id).
-		Updates(updates)
-
-	return CheckRowsAffected(result)
+	return db.WithContext(ctx).
+		Exec("SELECT messaging.mark_email(?, ?, ?)", id, status, lastError).Error
 }
