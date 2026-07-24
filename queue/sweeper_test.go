@@ -148,6 +148,25 @@ func TestStaleSweeper_RunSweepsUntilContextCancelled(t *testing.T) {
 	}
 }
 
+func TestStaleSweeper_RunSweepsBeforeFirstTick(t *testing.T) {
+	passes := make(chan struct{}, 1)
+	s := sweeperFor(func(context.Context) ([]int64, error) {
+		passes <- struct{}{}
+		return nil, nil
+	}, &recordingPublisher{})
+	s.Interval = time.Hour // No tick can fire, so only the entry sweep can.
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go s.Run(ctx)
+
+	select {
+	case <-passes:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not sweep before the first tick")
+	}
+}
+
 func TestStaleSweeper_RunAppliesDefaults(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()

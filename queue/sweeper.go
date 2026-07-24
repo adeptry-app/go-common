@@ -41,7 +41,9 @@ type StaleSweeper struct {
 	Logger *slog.Logger
 }
 
-// Run sweeps on every tick and blocks until ctx is cancelled.
+// Run sweeps once on entry, then on every tick, and blocks until ctx is
+// cancelled. The entry sweep matters because a worker restarting faster than
+// interval would otherwise never reach a tick.
 func (s StaleSweeper) Run(ctx context.Context) {
 	interval := s.Interval
 	if interval <= 0 {
@@ -50,6 +52,11 @@ func (s StaleSweeper) Run(ctx context.Context) {
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+
+	if ctx.Err() != nil {
+		return
+	}
+	s.pass(ctx)
 
 	for {
 		select {
