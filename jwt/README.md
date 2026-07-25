@@ -13,8 +13,16 @@ service gets a `Verifier`, so a service that can check a token cannot mint one.
 | `JWT_PUBLIC_KEYS` | issuer + every verifier | comma-separated `<kid>:<base64 PKIX DER>` |
 | `JWT_ACCESS_AUDIENCE` | issuer | comma-separated services the access cookie reaches |
 
-Rotation: publish the new key to every verifier's `JWT_PUBLIC_KEYS` first, then
-switch the issuer's `JWT_PRIVATE_KEY`, then drop the retired key.
+`NewIssuer` and `NewVerifier` parse their keys once, at construction, so every
+step below needs the affected services restarted.
+
+Rotation, in order:
+
+1. Add the new public key to every verifier's `JWT_PUBLIC_KEYS`; restart them.
+2. Point the issuer's `JWT_PRIVATE_KEY` at the new key; restart it.
+3. Drop the retired public key only once every token it signed has expired.
+   Refresh tokens outlive access tokens, so that is `JWT_REFRESH_EXPIRY` after
+   step 2. Dropping it earlier logs those sessions out.
 
 ## Usage
 
@@ -47,10 +55,13 @@ if err != nil {
 
 // Validate a token
 claims, err := verifier.ValidateAccessToken(tokenString)
+if err != nil {
+    return err
+}
 userID := claims.UserID
 username := claims.Username
 scopes := claims.Scopes  // map[string]string{"profile": "read", ...}
-tokenType := claims.TokenType  // jwt.TokenTypeAccess or jwt.TokenTypeRefresh
+tokenType := claims.TokenType  // always jwt.TokenTypeAccess here
 ttl := claims.GetTTL()
 
 // Generate tokens (issuer only). Scopes and the profile fields are optional.
@@ -65,11 +76,21 @@ identity := jwt.Identity{
         "projects": "edit",
     },
 }
+// Each of these returns an error on a non-positive user id or empty username.
 accessToken, err := issuer.GenerateAccessToken(identity)
+if err != nil {
+    return err
+}
 refreshToken, err := issuer.GenerateRefreshToken(identity)
+if err != nil {
+    return err
+}
 
 // One service-to-service call, addressed to a single audience
 serviceToken, err := issuer.GenerateServiceToken(identity, jwt.AudienceMessaging)
+if err != nil {
+    return err
+}
 ```
 
 ## Audiences
@@ -94,4 +115,4 @@ rejects any token whose `TokenType` is not `jwt.TokenTypeAccess`.
 
 - No network calls (faster, more resilient)
 - A leaked verifier key cannot mint tokens
-- Key rotation without redeploying the issuer
+- Signing keys rotate without logging live sessions out

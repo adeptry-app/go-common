@@ -33,6 +33,13 @@ router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 `QueueMetrics` implements the queue package's `MetricsRecorder` interface:
 
 ```go
+import (
+    "log"
+
+    "github.com/adeptry-app/go-common/metrics"
+    "github.com/adeptry-app/go-common/queue"
+)
+
 queueMetrics := metrics.NewQueueMetrics(metrics.Config{
     ServiceName: "worker",
     Namespace:   "portfolio",
