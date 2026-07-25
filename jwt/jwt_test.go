@@ -341,6 +341,11 @@ func TestGenerateToken_InputValidation(t *testing.T) {
 		// AudienceAuth so the issuer's own verifier can round-trip the result.
 		"service": func(id Identity) (string, error) { return iss.GenerateServiceToken(id, AudienceAuth) },
 	}
+	validators := map[string]func(string) (*Claims, error){
+		"access":  iss.ValidateAccessToken,
+		"refresh": iss.ValidateRefreshToken,
+		"service": iss.ValidateAccessToken,
+	}
 
 	for kind, generate := range generators {
 		for _, tt := range tests {
@@ -358,9 +363,9 @@ func TestGenerateToken_InputValidation(t *testing.T) {
 					t.Fatal("Generated token is empty")
 				}
 
-				claims, err := iss.ValidateToken(token)
+				claims, err := validators[kind](token)
 				if err != nil {
-					t.Fatalf("ValidateToken() error = %v", err)
+					t.Fatalf("validate() error = %v", err)
 				}
 				if claims.UserID != tt.userID {
 					t.Errorf("Claims.UserID = %v, want %v", claims.UserID, tt.userID)
@@ -410,9 +415,9 @@ func TestGenerateAccessToken_SpecialCharactersInUsername(t *testing.T) {
 				t.Fatalf("GenerateAccessToken() error = %v", err)
 			}
 
-			claims, err := iss.ValidateToken(token)
+			claims, err := iss.ValidateAccessToken(token)
 			if err != nil {
-				t.Fatalf("ValidateToken() error = %v", err)
+				t.Fatalf("ValidateAccessToken() error = %v", err)
 			}
 
 			if claims.Username != tt.username {
@@ -448,17 +453,17 @@ func TestGenerateAccessToken_TokensAreDifferent(t *testing.T) {
 	}
 
 	// But both should be valid
-	claims1, err := iss.ValidateToken(token1)
+	claims1, err := iss.ValidateAccessToken(token1)
 	if err != nil {
-		t.Fatalf("ValidateToken(token1) error = %v", err)
+		t.Fatalf("ValidateAccessToken(token1) error = %v", err)
 	}
 	if claims1.UserID != 1 {
 		t.Errorf("Claims1.UserID = %v, want 1", claims1.UserID)
 	}
 
-	claims2, err := iss.ValidateToken(token2)
+	claims2, err := iss.ValidateAccessToken(token2)
 	if err != nil {
-		t.Fatalf("ValidateToken(token2) error = %v", err)
+		t.Fatalf("ValidateAccessToken(token2) error = %v", err)
 	}
 	if claims2.UserID != 1 {
 		t.Errorf("Claims2.UserID = %v, want 1", claims2.UserID)
@@ -480,9 +485,9 @@ func TestGenerateAccessToken_ClaimsStructure(t *testing.T) {
 
 	afterGeneration := time.Now()
 
-	claims, err := iss.ValidateToken(token)
+	claims, err := iss.ValidateAccessToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 
 	// Verify custom claims
@@ -570,6 +575,10 @@ func TestGenerateToken_WithScopes(t *testing.T) {
 		"access":  iss.GenerateAccessToken,
 		"refresh": iss.GenerateRefreshToken,
 	}
+	validators := map[string]func(string) (*Claims, error){
+		"access":  iss.ValidateAccessToken,
+		"refresh": iss.ValidateRefreshToken,
+	}
 
 	for kind, generate := range generators {
 		for _, tt := range tests {
@@ -579,9 +588,9 @@ func TestGenerateToken_WithScopes(t *testing.T) {
 					t.Fatalf("generate() error = %v", err)
 				}
 
-				claims, err := iss.ValidateToken(token)
+				claims, err := validators[kind](token)
 				if err != nil {
-					t.Fatalf("ValidateToken() error = %v", err)
+					t.Fatalf("validate() error = %v", err)
 				}
 				checkScopes(t, tt.scopes, claims.Scopes)
 			})
@@ -623,9 +632,9 @@ func TestAccessTokenAudience(t *testing.T) {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	claims, err := iss.ValidateToken(token)
+	claims, err := iss.ValidateAccessToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 
 	// AudienceAuth is implicit; the rest come from the configured list.
@@ -714,9 +723,9 @@ func TestRefreshTokenAudienceIsAuthOnly(t *testing.T) {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
 
-	claims, err := iss.ValidateToken(token)
+	claims, err := iss.ValidateRefreshToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 
 	if len(claims.Audience) != 1 || claims.Audience[0] != AudienceAuth {
@@ -758,7 +767,7 @@ func TestVerifierRejectsRefreshTokenAtOtherServices(t *testing.T) {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
 
-	if _, err := filesAPI.ValidateToken(refresh); err == nil {
+	if _, err := filesAPI.ValidateRefreshToken(refresh); err == nil {
 		t.Error("files-api must reject a refresh token")
 	}
 }
@@ -879,9 +888,9 @@ func TestGenerateToken_ScopesDefensiveCopy(t *testing.T) {
 	originalScopes["newkey"] = "read"
 
 	// Validate token and verify claims weren't affected by mutation
-	claims, err := iss.ValidateToken(token)
+	claims, err := iss.ValidateAccessToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 
 	// Claims should have original values, not mutated ones
@@ -897,10 +906,10 @@ func TestGenerateToken_ScopesDefensiveCopy(t *testing.T) {
 }
 
 // =============================================================================
-// ValidateToken Tests
+// Validation Tests
 // =============================================================================
 
-func TestValidateToken_ValidToken(t *testing.T) {
+func TestValidateAccessToken_ValidToken(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	userID := int64(1)
@@ -912,9 +921,9 @@ func TestValidateToken_ValidToken(t *testing.T) {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	claims, err := iss.ValidateToken(token)
+	claims, err := iss.ValidateAccessToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 	if claims.UserID != userID {
 		t.Errorf("Claims.UserID = %v, want %v", claims.UserID, userID)
@@ -924,7 +933,7 @@ func TestValidateToken_ValidToken(t *testing.T) {
 	}
 }
 
-func TestValidateToken_ExpiredToken(t *testing.T) {
+func TestValidateAccessToken_ExpiredToken(t *testing.T) {
 	t.Parallel()
 
 	// Create issuer with very short expiry
@@ -939,12 +948,12 @@ func TestValidateToken_ExpiredToken(t *testing.T) {
 	// Wait for token to expire
 	time.Sleep(10 * time.Millisecond)
 
-	if _, err = iss.ValidateToken(token); err == nil {
-		t.Error("ValidateToken() should fail for expired token")
+	if _, err = iss.ValidateAccessToken(token); err == nil {
+		t.Error("ValidateAccessToken() should fail for expired token")
 	}
 }
 
-func TestValidateToken_InvalidSignature(t *testing.T) {
+func TestValidateAccessToken_InvalidSignature(t *testing.T) {
 	iss1 := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 	iss2 := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
@@ -956,12 +965,12 @@ func TestValidateToken_InvalidSignature(t *testing.T) {
 	}
 
 	// Both issuers share the key id but hold different key material
-	if _, err = iss2.ValidateToken(token); err == nil {
-		t.Error("ValidateToken() should fail for a token signed by another key")
+	if _, err = iss2.ValidateAccessToken(token); err == nil {
+		t.Error("ValidateAccessToken() should fail for a token signed by another key")
 	}
 }
 
-func TestValidateToken_MalformedToken(t *testing.T) {
+func TestValidateAccessToken_MalformedToken(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	tests := []struct {
@@ -992,14 +1001,14 @@ func TestValidateToken_MalformedToken(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if _, err := iss.ValidateToken(tt.token); err == nil {
-				t.Error("ValidateToken() should fail for malformed token")
+			if _, err := iss.ValidateAccessToken(tt.token); err == nil {
+				t.Error("ValidateAccessToken() should fail for malformed token")
 			}
 		})
 	}
 }
 
-func TestValidateToken_TamperedToken(t *testing.T) {
+func TestValidateAccessToken_TamperedToken(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
@@ -1011,12 +1020,12 @@ func TestValidateToken_TamperedToken(t *testing.T) {
 	// Tamper with the token by changing a character
 	tamperedToken := token[:len(token)-5] + "XXXXX"
 
-	if _, err = iss.ValidateToken(tamperedToken); err == nil {
-		t.Error("ValidateToken() should fail for tampered token")
+	if _, err = iss.ValidateAccessToken(tamperedToken); err == nil {
+		t.Error("ValidateAccessToken() should fail for tampered token")
 	}
 }
 
-func TestValidateToken_AlgorithmConfusion(t *testing.T) {
+func TestValidateAccessToken_AlgorithmConfusion(t *testing.T) {
 	private, public := jwttest.KeyPair(t, testKeyID)
 	iss := mustIssuer(t, private, public, testAccessExpiry, testRefreshExpiry)
 
@@ -1041,12 +1050,12 @@ func TestValidateToken_AlgorithmConfusion(t *testing.T) {
 		t.Fatalf("SignedString() error = %v", err)
 	}
 
-	if _, err := iss.ValidateToken(signed); err == nil {
-		t.Error("ValidateToken() must reject an HS256 token signed with the public key")
+	if _, err := iss.ValidateAccessToken(signed); err == nil {
+		t.Error("ValidateAccessToken() must reject an HS256 token signed with the public key")
 	}
 }
 
-func TestValidateToken_WrongSigningMethodNone(t *testing.T) {
+func TestValidateAccessToken_WrongSigningMethodNone(t *testing.T) {
 	_, verifier := newTestPair(t, AudiencePublicAPI)
 
 	claims := &Claims{
@@ -1062,12 +1071,12 @@ func TestValidateToken_WrongSigningMethodNone(t *testing.T) {
 	token.Header["kid"] = testKeyID
 	tokenString, _ := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
 
-	if _, err := verifier.ValidateToken(tokenString); err == nil {
-		t.Error("ValidateToken() should fail for token with 'none' signing method")
+	if _, err := verifier.ValidateAccessToken(tokenString); err == nil {
+		t.Error("ValidateAccessToken() should fail for token with 'none' signing method")
 	}
 }
 
-func TestValidateToken_UnknownKeyID(t *testing.T) {
+func TestValidateAccessToken_UnknownKeyID(t *testing.T) {
 	signingPrivate, signingPublic := jwttest.KeyPair(t, "signing")
 	_, trustedPublic := jwttest.KeyPair(t, "trusted")
 
@@ -1079,12 +1088,12 @@ func TestValidateToken_UnknownKeyID(t *testing.T) {
 
 	// A verifier that has never seen the signing key id rejects on lookup.
 	ver := mustVerifier(t, trustedPublic, AudienceAuth)
-	if _, err := ver.ValidateToken(token); !errors.Is(err, ErrUnknownKeyID) {
-		t.Errorf("ValidateToken() error = %v, want %v", err, ErrUnknownKeyID)
+	if _, err := ver.ValidateAccessToken(token); !errors.Is(err, ErrUnknownKeyID) {
+		t.Errorf("ValidateAccessToken() error = %v, want %v", err, ErrUnknownKeyID)
 	}
 }
 
-func TestValidateToken_MissingKeyID(t *testing.T) {
+func TestValidateAccessToken_MissingKeyID(t *testing.T) {
 	private, public := jwttest.KeyPair(t, testKeyID)
 	_, key, err := parsePrivateKey(private)
 	if err != nil {
@@ -1106,12 +1115,12 @@ func TestValidateToken_MissingKeyID(t *testing.T) {
 	}
 
 	ver := mustVerifier(t, public, AudiencePublicAPI)
-	if _, err := ver.ValidateToken(signed); !errors.Is(err, ErrUnknownKeyID) {
-		t.Errorf("ValidateToken() error = %v, want %v", err, ErrUnknownKeyID)
+	if _, err := ver.ValidateAccessToken(signed); !errors.Is(err, ErrUnknownKeyID) {
+		t.Errorf("ValidateAccessToken() error = %v, want %v", err, ErrUnknownKeyID)
 	}
 }
 
-func TestValidateToken_InvalidClaimsStructure(t *testing.T) {
+func TestValidateAccessToken_InvalidClaimsStructure(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
@@ -1131,12 +1140,12 @@ func TestValidateToken_InvalidClaimsStructure(t *testing.T) {
 	corruptedPayload := "eyJpbnZhbGlkIjoiY2xhaW1zIn0" // {"invalid":"claims"}
 	corruptedToken := parts[0] + "." + corruptedPayload + "." + parts[2]
 
-	if _, err = iss.ValidateToken(corruptedToken); err == nil {
-		t.Error("ValidateToken() should fail for token with invalid claims structure")
+	if _, err = iss.ValidateAccessToken(corruptedToken); err == nil {
+		t.Error("ValidateAccessToken() should fail for token with invalid claims structure")
 	}
 }
 
-func TestValidateToken_ExpiryBoundary(t *testing.T) {
+func TestValidateAccessToken_ExpiryBoundary(t *testing.T) {
 	t.Parallel()
 
 	// Test token validation exactly at expiry boundary
@@ -1150,9 +1159,9 @@ func TestValidateToken_ExpiryBoundary(t *testing.T) {
 	}
 
 	// Should be valid immediately
-	claims, err := iss.ValidateToken(token)
+	claims, err := iss.ValidateAccessToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 	if claims == nil {
 		t.Fatal("Claims should not be nil")
@@ -1162,9 +1171,9 @@ func TestValidateToken_ExpiryBoundary(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// Should still be valid
-	claims, err = iss.ValidateToken(token)
+	claims, err = iss.ValidateAccessToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 	if claims == nil {
 		t.Fatal("Claims should not be nil")
@@ -1174,8 +1183,8 @@ func TestValidateToken_ExpiryBoundary(t *testing.T) {
 	time.Sleep(2500 * time.Millisecond)
 
 	// Should now be invalid
-	if _, err = iss.ValidateToken(token); err == nil {
-		t.Error("ValidateToken() should fail for expired token")
+	if _, err = iss.ValidateAccessToken(token); err == nil {
+		t.Error("ValidateAccessToken() should fail for expired token")
 	}
 }
 
@@ -1206,9 +1215,9 @@ func TestRefreshTokenExpiry(t *testing.T) {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
 
-	claims, err := iss.ValidateToken(token)
+	claims, err := iss.ValidateRefreshToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 
 	// Calculate expected expiry
@@ -1227,9 +1236,9 @@ func TestRefreshTokenExpiry(t *testing.T) {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	accessClaims, err := iss.ValidateToken(accessToken)
+	accessClaims, err := iss.ValidateAccessToken(accessToken)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 
 	if !claims.ExpiresAt.After(accessClaims.ExpiresAt.Time) {
@@ -1247,9 +1256,9 @@ func TestVeryLongExpiry(t *testing.T) {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	claims, err := iss.ValidateToken(token)
+	claims, err := iss.ValidateAccessToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 
 	// Verify expiry is approximately 1 year from now
@@ -1271,9 +1280,9 @@ func TestGenerateToken_TokenType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
-	accessClaims, err := iss.ValidateToken(access)
+	accessClaims, err := iss.ValidateAccessToken(access)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 	if accessClaims.TokenType != TokenTypeAccess {
 		t.Errorf("access TokenType = %q, want %q", accessClaims.TokenType, TokenTypeAccess)
@@ -1283,9 +1292,9 @@ func TestGenerateToken_TokenType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
-	refreshClaims, err := iss.ValidateToken(refresh)
+	refreshClaims, err := iss.ValidateRefreshToken(refresh)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 	if refreshClaims.TokenType != TokenTypeRefresh {
 		t.Errorf("refresh TokenType = %q, want %q", refreshClaims.TokenType, TokenTypeRefresh)
@@ -1337,9 +1346,9 @@ func TestGenerateAccessToken_ProfileClaims(t *testing.T) {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	claims, err := iss.ValidateToken(token)
+	claims, err := iss.ValidateAccessToken(token)
 	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
+		t.Fatalf("ValidateAccessToken() error = %v", err)
 	}
 	if claims.Email != "kal@example.com" || !claims.EmailVerified || claims.DisplayName != "Kaladin Stormblessed" {
 		t.Errorf("profile claims = %q/%v/%q", claims.Email, claims.EmailVerified, claims.DisplayName)
@@ -1438,9 +1447,9 @@ func TestConcurrentTokenGeneration(t *testing.T) {
 		}
 		seen[token] = true
 
-		claims, err := iss.ValidateToken(token)
+		claims, err := iss.ValidateAccessToken(token)
 		if err != nil {
-			t.Errorf("ValidateToken() error = %v", err)
+			t.Errorf("ValidateAccessToken() error = %v", err)
 		}
 		if claims == nil {
 			t.Error("Claims should not be nil")
@@ -1470,7 +1479,7 @@ func TestConcurrentTokenValidation(t *testing.T) {
 	// Validate token concurrently
 	for range concurrency {
 		go func() {
-			claims, err := iss.ValidateToken(token)
+			claims, err := iss.ValidateAccessToken(token)
 			if err != nil {
 				errs <- err
 			} else if claims == nil {

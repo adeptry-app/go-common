@@ -74,9 +74,9 @@ type Claims struct {
 }
 
 // Verifier checks tokens minted by the auth service; it holds public keys only.
-// Prefer the typed validators over ValidateToken.
+// There is deliberately no untyped validator: a caller that does not say which
+// kind it expects is one refactor away from accepting a refresh token as a session.
 type Verifier interface {
-	ValidateToken(tokenString string) (*Claims, error)
 	ValidateAccessToken(tokenString string) (*Claims, error)
 	ValidateRefreshToken(tokenString string) (*Claims, error)
 }
@@ -208,9 +208,9 @@ func newVerifier(publicKeys, audience string) (*verifier, error) {
 	}, nil
 }
 
-// ValidateToken parses a token and checks its signature, issuer, audience and
-// expiry. It does not check the token type; prefer the typed validators.
-func (v *verifier) ValidateToken(tokenString string) (*Claims, error) {
+// validateToken checks a token's signature, issuer, audience and expiry. The
+// token type is checked by validateTyped, the only caller.
+func (v *verifier) validateToken(tokenString string) (*Claims, error) {
 	claims := &Claims{}
 	token, err := v.parser.ParseWithClaims(tokenString, claims, v.keyFor)
 	if err != nil {
@@ -234,7 +234,7 @@ func (v *verifier) ValidateRefreshToken(tokenString string) (*Claims, error) {
 }
 
 func (v *verifier) validateTyped(tokenString, want string) (*Claims, error) {
-	claims, err := v.ValidateToken(tokenString)
+	claims, err := v.validateToken(tokenString)
 	if err != nil {
 		return nil, err
 	}
