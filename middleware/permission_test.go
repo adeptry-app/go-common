@@ -266,27 +266,19 @@ func TestLevelConstants(t *testing.T) {
 func TestResourceConstants(t *testing.T) {
 	// Verify resource constants match expected values
 	resources := map[string]string{
-		"ResourceProfile":        ResourceProfile,
-		"ResourceExperience":     ResourceExperience,
-		"ResourceCertifications": ResourceCertifications,
-		"ResourceSkills":         ResourceSkills,
-		"ResourceProjects":       ResourceProjects,
-		"ResourceMiniatures":     ResourceMiniatures,
-		"ResourceFiles":          ResourceFiles,
-		"ResourceMessages":       ResourceMessages,
-		"ResourceRecipients":     ResourceRecipients,
+		"ResourceClassifiers": ResourceClassifiers,
+		"ResourceHeroes":      ResourceHeroes,
+		"ResourceCampaigns":   ResourceCampaigns,
+		"ResourceFiles":       ResourceFiles,
+		"ResourceEmails":      ResourceEmails,
 	}
 
 	expected := map[string]string{
-		"ResourceProfile":        "profile",
-		"ResourceExperience":     "experience",
-		"ResourceCertifications": "certifications",
-		"ResourceSkills":         "skills",
-		"ResourceProjects":       "projects",
-		"ResourceMiniatures":     "miniatures",
-		"ResourceFiles":          "files",
-		"ResourceMessages":       "messages",
-		"ResourceRecipients":     "recipients",
+		"ResourceClassifiers": "classifiers",
+		"ResourceHeroes":      "heroes",
+		"ResourceCampaigns":   "campaigns",
+		"ResourceFiles":       "files",
+		"ResourceEmails":      "emails",
 	}
 
 	for name, got := range resources {

@@ -14,18 +14,14 @@ const (
 	LevelDelete = "delete"
 )
 
-// Resource constants for type-safe usage
+// Resource constants every service gates its routes on. Codes must match the
+// auth.resources rows seeded by R__seed_rbac.sql.
 const (
-	ResourceProfile        = "profile"
-	ResourceExperience     = "experience"
-	ResourceCertifications = "certifications"
-	ResourceSkills         = "skills"
-	ResourceProjects       = "projects"
-	ResourceMiniatures     = "miniatures"
-	ResourceFiles          = "files"
-	ResourceMessages       = "messages"
-	ResourceRecipients     = "recipients"
-	ResourceEmails         = "emails"
+	ResourceClassifiers = "classifiers"
+	ResourceHeroes      = "heroes"
+	ResourceCampaigns   = "campaigns"
+	ResourceFiles       = "files"
+	ResourceEmails      = "emails"
 )
 
 // Permission levels (hierarchical): none(0) < read(1) < edit(2) < delete(3)
