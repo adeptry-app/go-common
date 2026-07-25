@@ -18,7 +18,9 @@ step below needs the affected services restarted.
 
 Rotation, in order:
 
-1. Add the new public key to every verifier's `JWT_PUBLIC_KEYS`; restart them.
+1. Add the new public key to every `JWT_PUBLIC_KEYS`, the issuer's included;
+   restart. `NewIssuer` rejects a private key whose `kid` is not in its own
+   list, so skipping the issuer here fails step 2 at boot.
 2. Point the issuer's `JWT_PRIVATE_KEY` at the new key; restart it.
 3. Drop the retired public key only once every token it signed has expired.
    Refresh tokens outlive access tokens, so that is `JWT_REFRESH_EXPIRY` after
