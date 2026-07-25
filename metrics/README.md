@@ -38,8 +38,14 @@ queueMetrics := metrics.NewQueueMetrics(metrics.Config{
     Namespace:   "portfolio",
 })
 
-publisher, _ := queue.NewRabbitMQPublisher(cfg, queue.WithPublisherMetrics(queueMetrics))
-consumer, _ := queue.NewRabbitMQConsumer(cfg, publisher, logger, queue.WithConsumerMetrics(queueMetrics))
+publisher, err := queue.NewRabbitMQPublisher(cfg, queue.WithPublisherMetrics(queueMetrics))
+if err != nil {
+    log.Fatal(err)
+}
+consumer, err := queue.NewRabbitMQConsumer(cfg, publisher, logger, queue.WithConsumerMetrics(queueMetrics))
+if err != nil {
+    log.Fatal(err)
+}
 
 // Optional: poll and expose DLQ depth
 queueMetrics.SetQueueDepth(publisher.DLQName(), float64(depth))

@@ -49,7 +49,10 @@ import (
 dbCfg := config.NewDatabaseConfig()
 
 // Database
-db, _ := database.Connect(dbCfg)
+db, err := database.Connect(dbCfg)
+if err != nil {
+    log.Fatalf("database: %v", err)
+}
 defer func() {
     if err := database.CloseDB(db); err != nil {
         log.Printf("failed to close database: %v", err)

@@ -20,7 +20,7 @@ switch the issuer's `JWT_PRIVATE_KEY`, then drop the retired key.
 
 ```go
 import (
-    "time"
+    "log"
 
     "github.com/adeptry-app/go-common/config"
     "github.com/adeptry-app/go-common/jwt"
@@ -28,6 +28,9 @@ import (
 
 // For services that only validate tokens
 verifier, err := jwt.NewVerifier(config.GetEnvRequired("JWT_PUBLIC_KEYS"), jwt.AudiencePublicAPI)
+if err != nil {
+    log.Fatalf("jwt verifier: %v", err)
+}
 
 // For the auth service, which also mints them
 cfg := config.NewJWTConfig()
@@ -38,6 +41,9 @@ issuer, err := jwt.NewIssuer(jwt.IssuerConfig{
     AccessExpiry:   cfg.AccessExpiry,
     RefreshExpiry:  cfg.RefreshExpiry,
 })
+if err != nil {
+    log.Fatalf("jwt issuer: %v", err)
+}
 
 // Validate a token
 claims, err := verifier.ValidateAccessToken(tokenString)

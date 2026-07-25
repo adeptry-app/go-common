@@ -12,7 +12,7 @@ import (
 
 // KeyPair returns a fresh Ed25519 pair as "<kid>:<base64 DER>" entries, matching
 // JWT_PRIVATE_KEY (PKCS8) and JWT_PUBLIC_KEYS (PKIX).
-func KeyPair(t *testing.T, kid string) (private, public string) {
+func KeyPair(t testing.TB, kid string) (private, public string) {
 	t.Helper()
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
