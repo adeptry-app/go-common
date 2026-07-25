@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/go-playground/validator/v10"
 )
@@ -19,22 +18,11 @@ type ServiceConfig struct {
 // NewServiceConfig loads service configuration from environment variables.
 // It panics if required environment variables are missing or configuration is invalid.
 func NewServiceConfig(defaultPort int) ServiceConfig {
-	// Parse allowed origins from comma-separated string
-	// NO DEFAULT - CORS must be explicitly configured
-	allowedOriginsStr := GetEnvRequired("ALLOWED_ORIGINS")
-	rawOrigins := strings.Split(allowedOriginsStr, ",")
-	allowedOrigins := make([]string, 0, len(rawOrigins))
-	for _, origin := range rawOrigins {
-		trimmed := strings.TrimSpace(origin)
-		if trimmed != "" {
-			allowedOrigins = append(allowedOrigins, trimmed)
-		}
-	}
-
 	cfg := ServiceConfig{
-		Port:           GetEnvInt("PORT", defaultPort),
-		Environment:    GetEnv("ENVIRONMENT", "development"),
-		AllowedOrigins: allowedOrigins,
+		Port:        GetEnvInt("PORT", defaultPort),
+		Environment: GetEnv("ENVIRONMENT", "development"),
+		// NO DEFAULT - CORS must be explicitly configured
+		AllowedOrigins: GetEnvRequiredList("ALLOWED_ORIGINS"),
 		SwaggerHost:    GetEnv("SWAGGER_HOST", ""),
 	}
 

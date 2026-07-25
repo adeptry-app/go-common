@@ -33,13 +33,26 @@ router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 `QueueMetrics` implements the queue package's `MetricsRecorder` interface:
 
 ```go
+import (
+    "log"
+
+    "github.com/adeptry-app/go-common/metrics"
+    "github.com/adeptry-app/go-common/queue"
+)
+
 queueMetrics := metrics.NewQueueMetrics(metrics.Config{
     ServiceName: "worker",
     Namespace:   "portfolio",
 })
 
-publisher, _ := queue.NewRabbitMQPublisher(cfg, queue.WithPublisherMetrics(queueMetrics))
-consumer, _ := queue.NewRabbitMQConsumer(cfg, publisher, logger, queue.WithConsumerMetrics(queueMetrics))
+publisher, err := queue.NewRabbitMQPublisher(cfg, queue.WithPublisherMetrics(queueMetrics))
+if err != nil {
+    log.Fatal(err)
+}
+consumer, err := queue.NewRabbitMQConsumer(cfg, publisher, logger, queue.WithConsumerMetrics(queueMetrics))
+if err != nil {
+    log.Fatal(err)
+}
 
 // Optional: poll and expose DLQ depth
 queueMetrics.SetQueueDepth(publisher.DLQName(), float64(depth))

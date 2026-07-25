@@ -18,7 +18,7 @@ go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out -o coverage.html
 
 # Run specific test
-go test -v -run TestNewService ./jwt/
+go test -v -run TestNewVerifier ./jwt/
 
 # Run all JWT tests
 go test -v ./jwt/
@@ -33,9 +33,11 @@ go test -v ./health/
 
 | Category | Coverage |
 | -------- | -------- |
-| Constructor | NewService, NewValidatorOnly, validation |
-| Token Generation | Access tokens, refresh tokens, claims, scopes |
-| Token Validation | Valid, expired, tampered, malformed |
+| Constructor | NewIssuer, NewVerifier, key pairing, duplicate `kid`, format and expiry errors |
+| Token Generation | Access tokens, refresh tokens, service tokens, claims, scopes |
+| Token Validation | Valid, expired, tampered, malformed, algorithm confusion, unknown `kid` |
+| Audience | Browser vs service audiences; each verifier rejects tokens meant for another |
+| Key Rotation | Multiple public keys accepted; retired key stops validating |
 | Scopes | Access/refresh with scopes, nil/empty, defensive copy |
 | Token Type | `token_type` claim set per token kind; typed validators reject the other kind |
 | Profile Claims | Email, display name, verified flag on access tokens |

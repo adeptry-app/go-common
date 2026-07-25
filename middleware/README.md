@@ -8,12 +8,19 @@ Local JWT token validation with automatic TTL handling:
 
 ```go
 import (
+    "log"
+
+    "github.com/adeptry-app/go-common/config"
     "github.com/adeptry-app/go-common/jwt"
     "github.com/adeptry-app/go-common/middleware"
 )
 
-jwtService, _ := jwt.NewValidatorOnly(secret)
-authMiddleware := middleware.NewAuthMiddleware(jwtService)
+// A Verifier, not an Issuer, so a service behind this middleware cannot mint tokens.
+verifier, err := jwt.NewVerifier(config.GetEnvRequired("JWT_PUBLIC_KEYS"), jwt.AudiencePublicAPI)
+if err != nil {
+    log.Fatalf("jwt verifier: %v", err)
+}
+authMiddleware := middleware.NewAuthMiddleware(verifier)
 
 protected := router.Group("/api/v1")
 protected.Use(authMiddleware.ValidateToken())

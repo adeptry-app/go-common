@@ -31,7 +31,7 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 
 - `ServiceConfig` - Port, environment, allowed origins
 - `DatabaseConfig` - PostgreSQL connection settings
-- `JWTConfig` - JWT secret and expiration
+- `JWTConfig` - JWT signing keys, access audience, expiration (issuer only)
 - `RedisConfig` - Redis connection settings
 - `S3Config` - MinIO/S3 storage settings
 - `RabbitMQConfig` - RabbitMQ connection and queue settings
@@ -51,10 +51,33 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 - `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, `DB_NAME` - Required
 - `DB_SSLMODE` - Optional (disable, allow, prefer, require, verify-ca, verify-full)
 
+### JWTConfig
+
+Loaded by the token issuer (auth-service) only. Verifying services read
+`JWT_PUBLIC_KEYS` themselves via `GetEnvRequired` and pass their own audience.
+
+- `JWT_PRIVATE_KEY` - Signing key, one `<kid>:<base64 PKCS8 DER>` (required)
+- `JWT_PUBLIC_KEYS` - Verification keys, comma-separated
+  `<kid>:<base64 PKIX DER>` (required)
+- `JWT_ACCESS_AUDIENCE` - Services the access cookie reaches, comma-separated
+  (required). `auth-service` is always added.
+- `JWT_ACCESS_EXPIRY` - Access token lifetime (default `15m`)
+- `JWT_REFRESH_EXPIRY` - Refresh token lifetime (default `168h`)
+
+See the `jwt` package README for the key format and rotation order.
+
 ### RedisConfig
 
 - `REDIS_HOST`, `REDIS_PORT` - Required
 - Optional: `REDIS_PASSWORD`, `REDIS_TLS` (default false)
+
+### S3Config
+
+- `S3_ENDPOINT` - Storage endpoint URL (required)
+- `S3_ACCESS_KEY`, `S3_SECRET_KEY` - Both or neither; omit to use AWS IAM role credentials
+- `S3_USE_SSL` - Optional (default false)
+- `S3_IMAGES_BUCKET`, `S3_DOCUMENTS_BUCKET`, `S3_MINIATURES_BUCKET`,
+  `S3_AVATARS_BUCKET` - Optional, default to the local MinIO bucket names
 
 ### RabbitMQConfig
 
