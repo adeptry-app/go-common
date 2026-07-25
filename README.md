@@ -18,7 +18,7 @@ Shared Go package for common code across microservices.
 | ------- | ----------- |
 | [config](config/) | Configuration management and environment helpers |
 | [database](database/) | PostgreSQL connection with GORM |
-| [jwt](jwt/) | Local JWT validation and generation |
+| [jwt](jwt/) | EdDSA token issuing and local validation |
 | [middleware](middleware/) | Auth and security middleware for Gin |
 | [models](models/) | Shared GORM database models |
 | [audit](audit/) | Security event logging |
@@ -47,7 +47,6 @@ import (
 
 // Configuration
 dbCfg := config.NewDatabaseConfig()
-jwtCfg := config.NewJWTConfig()
 
 // Database
 db, _ := database.Connect(dbCfg)
@@ -57,9 +56,13 @@ defer func() {
     }
 }()
 
-// Auth middleware
-jwtService, _ := jwt.NewValidatorOnly(jwtCfg.Secret)
-authMiddleware := middleware.NewAuthMiddleware(jwtService)
+// Auth middleware. Only the auth service builds a jwt.Issuer; every other
+// service takes public keys and its own audience, so it cannot mint tokens.
+verifier, err := jwt.NewVerifier(config.GetEnvRequired("JWT_PUBLIC_KEYS"), jwt.AudiencePublicAPI)
+if err != nil {
+    log.Fatalf("jwt verifier: %v", err)
+}
+authMiddleware := middleware.NewAuthMiddleware(verifier)
 
 // Health checks
 healthAgg := health.NewAggregator(3 * time.Second)

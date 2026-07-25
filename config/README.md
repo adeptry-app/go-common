@@ -31,7 +31,7 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 
 - `ServiceConfig` - Port, environment, allowed origins
 - `DatabaseConfig` - PostgreSQL connection settings
-- `JWTConfig` - JWT secret and expiration
+- `JWTConfig` - JWT signing keys, access audience, expiration (issuer only)
 - `RedisConfig` - Redis connection settings
 - `S3Config` - MinIO/S3 storage settings
 - `RabbitMQConfig` - RabbitMQ connection and queue settings

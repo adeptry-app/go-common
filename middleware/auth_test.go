@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/adeptry-app/go-common/jwt"
+	"github.com/adeptry-app/go-common/jwt/jwttest"
 	"github.com/gin-gonic/gin"
 )
 
@@ -72,19 +73,33 @@ func TestGetIdentity_NotAuthenticated(t *testing.T) {
 }
 
 func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
-	const secret = "test-secret-key-at-least-32-bytes-long"
-	jwtService, err := jwt.NewService(secret, 15*time.Minute, 24*time.Hour)
+	private, public := jwttest.KeyPair(t, "test1")
+	issuer, err := jwt.NewIssuer(jwt.IssuerConfig{
+		PrivateKey:     private,
+		PublicKeys:     public,
+		AccessAudience: []string{jwt.AudiencePublicAPI},
+		AccessExpiry:   15 * time.Minute,
+		RefreshExpiry:  24 * time.Hour,
+	})
 	if err != nil {
-		t.Fatalf("NewService() error = %v", err)
+		t.Fatalf("NewIssuer() error = %v", err)
+	}
+	verifier, err := jwt.NewVerifier(public, jwt.AudiencePublicAPI)
+	if err != nil {
+		t.Fatalf("NewVerifier() error = %v", err)
 	}
 
-	access, err := jwtService.GenerateAccessToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil})
+	access, err := issuer.GenerateAccessToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
-	refresh, err := jwtService.GenerateRefreshToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil})
+	refresh, err := issuer.GenerateRefreshToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil})
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
+	foreign, err := issuer.GenerateServiceToken(jwt.Identity{UserID: 1, Username: "auth-service"}, jwt.AudienceMessaging)
+	if err != nil {
+		t.Fatalf("GenerateServiceToken() error = %v", err)
 	}
 
 	tests := []struct {
@@ -94,6 +109,7 @@ func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
 	}{
 		{"access token", access, http.StatusOK},
 		{"refresh token", refresh, http.StatusUnauthorized},
+		{"token for another service", foreign, http.StatusUnauthorized},
 	}
 
 	for _, tt := range tests {
@@ -101,7 +117,7 @@ func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
 			gin.SetMode(gin.TestMode)
 			w := httptest.NewRecorder()
 			router := gin.New()
-			router.Use(NewAuthMiddleware(jwtService).ValidateToken())
+			router.Use(NewAuthMiddleware(verifier).ValidateToken())
 			router.GET("/heroes", func(c *gin.Context) { c.Status(http.StatusOK) })
 
 			req := httptest.NewRequest(http.MethodGet, "/heroes", nil)

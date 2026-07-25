@@ -1,141 +1,298 @@
 package jwt
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/base64"
 	"errors"
+	"math"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/adeptry-app/go-common/jwt/jwttest"
 	"github.com/golang-jwt/jwt/v5"
 )
 
 const (
-	testSecret        = "test-secret-key-at-least-32-chars-long"
+	testKeyID         = "test1"
 	testAccessExpiry  = 15 * time.Minute
 	testRefreshExpiry = 168 * time.Hour
 )
+
+// testAudience mirrors the services a browser access cookie reaches.
+var testAudience = []string{AudiencePublicAPI, AudienceFilesAPI}
+
+func mustIssuer(t *testing.T, private, public string, accessExpiry, refreshExpiry time.Duration) Issuer {
+	t.Helper()
+
+	iss, err := NewIssuer(IssuerConfig{
+		PrivateKey:     private,
+		PublicKeys:     public,
+		AccessAudience: testAudience,
+		AccessExpiry:   accessExpiry,
+		RefreshExpiry:  refreshExpiry,
+	})
+	if err != nil {
+		t.Fatalf("NewIssuer() error = %v", err)
+	}
+	return iss
+}
+
+func newIssuer(private, public string, audience []string, access, refresh time.Duration) (Issuer, error) {
+	return NewIssuer(IssuerConfig{
+		PrivateKey:     private,
+		PublicKeys:     public,
+		AccessAudience: audience,
+		AccessExpiry:   access,
+		RefreshExpiry:  refresh,
+	})
+}
+
+func mustVerifier(t *testing.T, publicKeys, audience string) Verifier {
+	t.Helper()
+
+	ver, err := NewVerifier(publicKeys, audience)
+	if err != nil {
+		t.Fatalf("NewVerifier() error = %v", err)
+	}
+	return ver
+}
+
+func newTestIssuer(t *testing.T, accessExpiry, refreshExpiry time.Duration) Issuer {
+	t.Helper()
+
+	private, public := jwttest.KeyPair(t, testKeyID)
+	return mustIssuer(t, private, public, accessExpiry, refreshExpiry)
+}
+
+// newTestPair returns an issuer and a verifier for a different audience, both on
+// the same key.
+func newTestPair(t *testing.T, audience string) (Issuer, Verifier) {
+	t.Helper()
+
+	private, public := jwttest.KeyPair(t, testKeyID)
+	return mustIssuer(t, private, public, testAccessExpiry, testRefreshExpiry),
+		mustVerifier(t, public, audience)
+}
+
+// ecdsaPublicKey returns a well-formed PKIX key that is not Ed25519.
+func ecdsaPublicKey(t *testing.T, kid string) string {
+	t.Helper()
+
+	der, err := x509.MarshalPKIXPublicKey(&testECDSAKey(t).PublicKey)
+	if err != nil {
+		t.Fatalf("MarshalPKIXPublicKey() error = %v", err)
+	}
+	return kid + ":" + base64.StdEncoding.EncodeToString(der)
+}
+
+// ecdsaPrivateKey returns a well-formed PKCS8 key that is not Ed25519.
+func ecdsaPrivateKey(t *testing.T, kid string) string {
+	t.Helper()
+
+	der, err := x509.MarshalPKCS8PrivateKey(testECDSAKey(t))
+	if err != nil {
+		t.Fatalf("MarshalPKCS8PrivateKey() error = %v", err)
+	}
+	return kid + ":" + base64.StdEncoding.EncodeToString(der)
+}
+
+func testECDSAKey(t *testing.T) *ecdsa.PrivateKey {
+	t.Helper()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("ecdsa.GenerateKey() error = %v", err)
+	}
+	return key
+}
 
 // =============================================================================
 // Constructor Tests
 // =============================================================================
 
-func TestNewService(t *testing.T) {
-	svc, err := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
-	if err != nil {
-		t.Fatalf("NewService() error = %v", err)
-	}
-	if svc == nil {
-		t.Fatal("NewService returned nil")
-	}
+func TestNewIssuer_KeyErrors(t *testing.T) {
+	private, public := jwttest.KeyPair(t, testKeyID)
+	_, otherPublic := jwttest.KeyPair(t, testKeyID)
+	_, unrelatedPublic := jwttest.KeyPair(t, "other")
 
-	if got := svc.GetAccessExpiry(); got != testAccessExpiry {
-		t.Errorf("GetAccessExpiry() = %v, want %v", got, testAccessExpiry)
-	}
-
-	if got := svc.GetRefreshExpiry(); got != testRefreshExpiry {
-		t.Errorf("GetRefreshExpiry() = %v, want %v", got, testRefreshExpiry)
-	}
-}
-
-func TestNewService_EmptySecret(t *testing.T) {
-	_, err := NewService("", testAccessExpiry, testRefreshExpiry)
-	if err != ErrSecretTooShort {
-		t.Errorf("NewService() error = %v, want %v", err, ErrSecretTooShort)
-	}
-}
-
-func TestNewService_ShortSecret(t *testing.T) {
-	_, err := NewService("short", testAccessExpiry, testRefreshExpiry)
-	if err != ErrSecretTooShort {
-		t.Errorf("NewService() error = %v, want %v", err, ErrSecretTooShort)
-	}
-}
-
-func TestNewService_Exactly32Bytes(t *testing.T) {
-	svc, err := NewService("12345678901234567890123456789012", testAccessExpiry, testRefreshExpiry)
-	if err != nil {
-		t.Errorf("NewService() unexpected error = %v", err)
-	}
-	if svc == nil {
-		t.Error("NewService() returned nil for 32-byte secret")
-	}
-}
-
-func TestNewValidatorOnly(t *testing.T) {
 	tests := []struct {
-		name    string
-		secret  string
-		wantErr error
+		name       string
+		private    string
+		publicKeys string
+		wantErr    error
 	}{
 		{
-			name:    "valid secret",
-			secret:  testSecret,
-			wantErr: nil,
+			name:       "private key id absent from public list",
+			private:    private,
+			publicKeys: unrelatedPublic,
+			wantErr:    ErrUnknownKeyID,
 		},
 		{
-			name:    "secret too short",
-			secret:  "short",
-			wantErr: ErrSecretTooShort,
+			name:       "same key id, different key",
+			private:    private,
+			publicKeys: otherPublic,
+			wantErr:    ErrKeyMismatch,
 		},
 		{
-			name:    "empty secret",
-			secret:  "",
-			wantErr: ErrSecretTooShort,
+			name:       "private key missing the kid prefix",
+			private:    strings.SplitN(private, ":", 2)[1],
+			publicKeys: public,
+			wantErr:    ErrMalformedKey,
+		},
+		{
+			name:       "private key not base64",
+			private:    testKeyID + ":not-base64!!",
+			publicKeys: public,
+			wantErr:    ErrMalformedKey,
+		},
+		{
+			name:       "no public keys",
+			private:    private,
+			publicKeys: "",
+			wantErr:    ErrNoPublicKeys,
+		},
+		{
+			name:       "well-formed private key that is not Ed25519",
+			private:    ecdsaPrivateKey(t, testKeyID),
+			publicKeys: public,
+			wantErr:    jwt.ErrNotEdPrivateKey,
+		},
+		{
+			name:       "same key id listed twice",
+			private:    private,
+			publicKeys: public + "," + otherPublic,
+			wantErr:    ErrDuplicateKeyID,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			svc, err := NewValidatorOnly(tt.secret)
-			if err != tt.wantErr {
-				t.Errorf("NewValidatorOnly() error = %v, want %v", err, tt.wantErr)
-			}
-			if tt.wantErr == nil && svc == nil {
-				t.Error("NewValidatorOnly() returned nil")
+			_, err := newIssuer(tt.private, tt.publicKeys, testAudience, testAccessExpiry, testRefreshExpiry)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("NewIssuer() error = %v, want %v", err, tt.wantErr)
 			}
 		})
 	}
 }
 
-func TestValidatorOnlyCannotGenerateTokens(t *testing.T) {
-	svc, err := NewValidatorOnly(testSecret)
-	if err != nil {
-		t.Fatalf("NewValidatorOnly() error = %v", err)
-	}
+func TestNewIssuer_PublicKeyUsedAsPrivate(t *testing.T) {
+	_, public := jwttest.KeyPair(t, testKeyID)
 
-	scopes := map[string]string{"profile": "read"}
-	_, err = svc.GenerateAccessToken(Identity{UserID: 123, Username: "user", Scopes: scopes})
-	if err != ErrTokenGenDisabled {
-		t.Errorf("GenerateAccessToken() error = %v, want %v", err, ErrTokenGenDisabled)
-	}
-
-	_, err = svc.GenerateRefreshToken(Identity{UserID: 123, Username: "user", Scopes: scopes})
-	if err != ErrTokenGenDisabled {
-		t.Errorf("GenerateRefreshToken() error = %v, want %v", err, ErrTokenGenDisabled)
+	if _, err := newIssuer(public, public, testAudience, testAccessExpiry, testRefreshExpiry); err == nil {
+		t.Error("NewIssuer() should reject a public key in the private key slot")
 	}
 }
 
-func TestValidatorOnlyExpiryIsZero(t *testing.T) {
-	svc, _ := NewValidatorOnly(testSecret)
+func TestNewIssuer_NonPositiveExpiry(t *testing.T) {
+	private, public := jwttest.KeyPair(t, testKeyID)
 
-	if svc.GetAccessExpiry() != 0 {
-		t.Errorf("GetAccessExpiry() = %v, want 0", svc.GetAccessExpiry())
-	}
-	if svc.GetRefreshExpiry() != 0 {
-		t.Errorf("GetRefreshExpiry() = %v, want 0", svc.GetRefreshExpiry())
+	for _, tt := range []struct{ access, refresh time.Duration }{
+		{0, testRefreshExpiry},
+		{testAccessExpiry, 0},
+		{-time.Second, testRefreshExpiry},
+	} {
+		if _, err := newIssuer(private, public, testAudience, tt.access, tt.refresh); !errors.Is(err, ErrInvalidExpiry) {
+			t.Errorf("NewIssuer(%v, %v) error = %v, want %v", tt.access, tt.refresh, err, ErrInvalidExpiry)
+		}
 	}
 }
 
-func TestServiceInterfaceCompliance(t *testing.T) {
-	var _ Service = (*service)(nil)
+func TestNewVerifier(t *testing.T) {
+	_, public := jwttest.KeyPair(t, testKeyID)
+
+	tests := []struct {
+		name       string
+		publicKeys string
+		audience   string
+		wantFail   bool
+		wantErr    error
+	}{
+		{
+			name:       "valid",
+			publicKeys: public,
+			audience:   AudiencePublicAPI,
+		},
+		{
+			name:       "empty audience",
+			publicKeys: public,
+			audience:   "",
+			wantFail:   true,
+			wantErr:    ErrEmptyAudience,
+		},
+		{
+			name:       "empty key list",
+			publicKeys: "",
+			audience:   AudiencePublicAPI,
+			wantFail:   true,
+			wantErr:    ErrNoPublicKeys,
+		},
+		{
+			name:       "malformed entry",
+			publicKeys: "no-colon-here",
+			audience:   AudiencePublicAPI,
+			wantFail:   true,
+			wantErr:    ErrMalformedKey,
+		},
+		{
+			name:       "well-formed key that is not Ed25519",
+			publicKeys: ecdsaPublicKey(t, testKeyID),
+			audience:   AudiencePublicAPI,
+			wantFail:   true,
+			wantErr:    jwt.ErrNotEdPublicKey,
+		},
+		{
+			name:       "base64 that is not a key at all",
+			publicKeys: testKeyID + ":" + base64.StdEncoding.EncodeToString([]byte("garbage")),
+			audience:   AudiencePublicAPI,
+			wantFail:   true, // x509 parse error, no sentinel to match
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ver, err := NewVerifier(tt.publicKeys, tt.audience)
+
+			if !tt.wantFail {
+				if err != nil {
+					t.Fatalf("NewVerifier() unexpected error = %v", err)
+				}
+				if ver == nil {
+					t.Error("NewVerifier() returned nil")
+				}
+				return
+			}
+
+			if err == nil {
+				t.Fatal("NewVerifier() should have failed")
+			}
+			// A typed-nil in the interface would make this pass a nil check and
+			// panic on the first request instead.
+			if ver != nil {
+				t.Errorf("NewVerifier() returned %v alongside error %v, want nil", ver, err)
+			}
+			if tt.wantErr != nil && !errors.Is(err, tt.wantErr) {
+				t.Errorf("NewVerifier() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestInterfaceCompliance(t *testing.T) {
+	var _ Verifier = (*verifier)(nil)
+	var _ Issuer = (*issuer)(nil)
 }
 
 // =============================================================================
 // GenerateAccessToken Tests
 // =============================================================================
 
-func TestGenerateAccessToken(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+func TestGenerateToken_InputValidation(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	tests := []struct {
 		name     string
@@ -147,13 +304,16 @@ func TestGenerateAccessToken(t *testing.T) {
 			name:     "valid user",
 			userID:   1,
 			username: "testuser",
-			wantErr:  nil,
 		},
 		{
 			name:     "valid user with long username",
 			userID:   999,
 			username: "very_long_username_with_special_chars_123",
-			wantErr:  nil,
+		},
+		{
+			name:     "max int64 user ID",
+			userID:   math.MaxInt64,
+			username: "testuser",
 		},
 		{
 			name:     "zero user ID",
@@ -175,23 +335,30 @@ func TestGenerateAccessToken(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scopes := map[string]string{"profile": "read", "projects": "edit"}
-			token, err := svc.GenerateAccessToken(Identity{UserID: tt.userID, Username: tt.username, Scopes: scopes})
+	generators := map[string]func(Identity) (string, error){
+		"access":  iss.GenerateAccessToken,
+		"refresh": iss.GenerateRefreshToken,
+		// AudienceAuth so the issuer's own verifier can round-trip the result.
+		"service": func(id Identity) (string, error) { return iss.GenerateServiceToken(id, AudienceAuth) },
+	}
 
-			if err != tt.wantErr {
-				t.Errorf("GenerateAccessToken() error = %v, wantErr %v", err, tt.wantErr)
-				return
-			}
+	for kind, generate := range generators {
+		for _, tt := range tests {
+			t.Run(kind+"/"+tt.name, func(t *testing.T) {
+				scopes := map[string]string{"profile": "read", "projects": "edit"}
+				token, err := generate(Identity{UserID: tt.userID, Username: tt.username, Scopes: scopes})
 
-			if tt.wantErr == nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("generate() error = %v, wantErr %v", err, tt.wantErr)
+				}
+				if tt.wantErr != nil {
+					return
+				}
 				if token == "" {
-					t.Error("Generated token is empty")
+					t.Fatal("Generated token is empty")
 				}
 
-				// Verify token can be validated
-				claims, err := svc.ValidateToken(token)
+				claims, err := iss.ValidateToken(token)
 				if err != nil {
 					t.Fatalf("ValidateToken() error = %v", err)
 				}
@@ -201,34 +368,13 @@ func TestGenerateAccessToken(t *testing.T) {
 				if claims.Username != tt.username {
 					t.Errorf("Claims.Username = %v, want %v", claims.Username, tt.username)
 				}
-			}
-		})
-	}
-}
-
-func TestGenerateAccessToken_VeryLargeUserID(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
-
-	largeID := int64(9223372036854775807) // Max int64
-	scopes := map[string]string{"profile": "read"}
-
-	token, err := svc.GenerateAccessToken(Identity{UserID: largeID, Username: "testuser", Scopes: scopes})
-	if err != nil {
-		t.Fatalf("GenerateAccessToken() error = %v", err)
-	}
-
-	claims, err := svc.ValidateToken(token)
-	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
-	}
-
-	if claims.UserID != largeID {
-		t.Errorf("Claims.UserID = %v, want %v", claims.UserID, largeID)
+			})
+		}
 	}
 }
 
 func TestGenerateAccessToken_SpecialCharactersInUsername(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	tests := []struct {
 		name     string
@@ -259,12 +405,12 @@ func TestGenerateAccessToken_SpecialCharactersInUsername(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scopes := map[string]string{"profile": "read"}
-			token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: tt.username, Scopes: scopes})
+			token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: tt.username, Scopes: scopes})
 			if err != nil {
 				t.Fatalf("GenerateAccessToken() error = %v", err)
 			}
 
-			claims, err := svc.ValidateToken(token)
+			claims, err := iss.ValidateToken(token)
 			if err != nil {
 				t.Fatalf("ValidateToken() error = %v", err)
 			}
@@ -277,11 +423,13 @@ func TestGenerateAccessToken_SpecialCharactersInUsername(t *testing.T) {
 }
 
 func TestGenerateAccessToken_TokensAreDifferent(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	t.Parallel()
+
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
 	// Generate multiple tokens for same user
-	token1, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token1, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -289,7 +437,7 @@ func TestGenerateAccessToken_TokensAreDifferent(t *testing.T) {
 	// Sleep to ensure different IssuedAt timestamp (JWT timestamps are in seconds)
 	time.Sleep(1001 * time.Millisecond)
 
-	token2, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token2, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -300,7 +448,7 @@ func TestGenerateAccessToken_TokensAreDifferent(t *testing.T) {
 	}
 
 	// But both should be valid
-	claims1, err := svc.ValidateToken(token1)
+	claims1, err := iss.ValidateToken(token1)
 	if err != nil {
 		t.Fatalf("ValidateToken(token1) error = %v", err)
 	}
@@ -308,7 +456,7 @@ func TestGenerateAccessToken_TokensAreDifferent(t *testing.T) {
 		t.Errorf("Claims1.UserID = %v, want 1", claims1.UserID)
 	}
 
-	claims2, err := svc.ValidateToken(token2)
+	claims2, err := iss.ValidateToken(token2)
 	if err != nil {
 		t.Fatalf("ValidateToken(token2) error = %v", err)
 	}
@@ -318,21 +466,21 @@ func TestGenerateAccessToken_TokensAreDifferent(t *testing.T) {
 }
 
 func TestGenerateAccessToken_ClaimsStructure(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	userID := int64(42)
 	username := "testuser"
 	scopes := map[string]string{"profile": "read", "projects": "edit"}
 	beforeGeneration := time.Now()
 
-	token, err := svc.GenerateAccessToken(Identity{UserID: userID, Username: username, Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: userID, Username: username, Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
 	afterGeneration := time.Now()
 
-	claims, err := svc.ValidateToken(token)
+	claims, err := iss.ValidateToken(token)
 	if err != nil {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
@@ -352,6 +500,9 @@ func TestGenerateAccessToken_ClaimsStructure(t *testing.T) {
 	if claims.IssuedAt == nil {
 		t.Error("Claims.IssuedAt is nil")
 	}
+	if claims.Issuer != IssuerName {
+		t.Errorf("Claims.Issuer = %q, want %q", claims.Issuer, IssuerName)
+	}
 
 	// IssuedAt should be between before and after generation
 	issuedAt := claims.IssuedAt.Time
@@ -368,35 +519,30 @@ func TestGenerateAccessToken_ClaimsStructure(t *testing.T) {
 	}
 }
 
-func TestGenerateAccessToken_SigningMethod(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+func TestGenerateAccessToken_SigningMethodAndKeyID(t *testing.T) {
+	private, public := jwttest.KeyPair(t, testKeyID)
+	iss := mustIssuer(t, private, public, testAccessExpiry, testRefreshExpiry)
 
-	scopes := map[string]string{"profile": "read"}
-	// Generate valid token
-	validToken, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	// Parse and verify it uses HMAC
-	token, err := jwt.ParseWithClaims(validToken, &Claims{}, func(token *jwt.Token) (interface{}, error) {
-		// Verify signing method is HMAC
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			t.Errorf("Token uses %v, want *jwt.SigningMethodHMAC", token.Method)
-		}
-		return []byte(testSecret), nil
-	})
-
+	parsed, _, err := jwt.NewParser().ParseUnverified(token, &Claims{})
 	if err != nil {
-		t.Fatalf("ParseWithClaims() error = %v", err)
+		t.Fatalf("ParseUnverified() error = %v", err)
 	}
-	if !token.Valid {
-		t.Error("Token should be valid")
+
+	if parsed.Method.Alg() != signingMethod {
+		t.Errorf("Token alg = %q, want %q", parsed.Method.Alg(), signingMethod)
+	}
+	if parsed.Header["kid"] != testKeyID {
+		t.Errorf("Token kid = %v, want %q", parsed.Header["kid"], testKeyID)
 	}
 }
 
-func TestGenerateAccessToken_WithScopes(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+func TestGenerateToken_WithScopes(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	tests := []struct {
 		name   string
@@ -420,39 +566,298 @@ func TestGenerateAccessToken_WithScopes(t *testing.T) {
 		},
 	}
 
+	generators := map[string]func(Identity) (string, error){
+		"access":  iss.GenerateAccessToken,
+		"refresh": iss.GenerateRefreshToken,
+	}
+
+	for kind, generate := range generators {
+		for _, tt := range tests {
+			t.Run(kind+"/"+tt.name, func(t *testing.T) {
+				token, err := generate(Identity{UserID: 1, Username: "testuser", Scopes: tt.scopes})
+				if err != nil {
+					t.Fatalf("generate() error = %v", err)
+				}
+
+				claims, err := iss.ValidateToken(token)
+				if err != nil {
+					t.Fatalf("ValidateToken() error = %v", err)
+				}
+				checkScopes(t, tt.scopes, claims.Scopes)
+			})
+		}
+	}
+}
+
+// checkScopes compares scopes across a JSON round trip, where an empty map comes
+// back as nil.
+func checkScopes(t *testing.T, want, got map[string]string) {
+	t.Helper()
+
+	if want == nil {
+		if got != nil {
+			t.Errorf("Claims.Scopes = %v, want nil", got)
+		}
+		return
+	}
+	if len(got) != len(want) {
+		t.Errorf("Claims.Scopes = %v, want %v", got, want)
+		return
+	}
+	for resource, level := range want {
+		if got[resource] != level {
+			t.Errorf("Claims.Scopes[%s] = %v, want %v", resource, got[resource], level)
+		}
+	}
+}
+
+// =============================================================================
+// Audience Tests
+// =============================================================================
+
+func TestAccessTokenAudience(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
+
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+
+	claims, err := iss.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+
+	// AudienceAuth is implicit; the rest come from the configured list.
+	want := append([]string{AudienceAuth}, testAudience...)
+	if !slices.Equal(claims.Audience, want) {
+		t.Errorf("access token audience = %v, want %v", claims.Audience, want)
+	}
+	if slices.Contains(claims.Audience, AudienceMessaging) {
+		t.Errorf("access token audience %v must not include %q", claims.Audience, AudienceMessaging)
+	}
+}
+
+func TestAccessAudience(t *testing.T) {
+	tests := []struct {
+		name       string
+		configured []string
+		want       []string
+		wantErr    error
+	}{
+		{
+			name:       "auth service is prepended",
+			configured: []string{AudiencePublicAPI, AudienceFilesAPI},
+			want:       []string{AudienceAuth, AudiencePublicAPI, AudienceFilesAPI},
+		},
+		{
+			name:       "explicit auth service is not duplicated",
+			configured: []string{AudienceAuth, AudiencePublicAPI},
+			want:       []string{AudienceAuth, AudiencePublicAPI},
+		},
+		{
+			name:       "repeated entry is collapsed",
+			configured: []string{AudiencePublicAPI, AudiencePublicAPI},
+			want:       []string{AudienceAuth, AudiencePublicAPI},
+		},
+		{
+			name:       "unset",
+			configured: nil,
+			wantErr:    ErrEmptyAudience,
+		},
+		{
+			name:       "blank entry",
+			configured: []string{AudiencePublicAPI, ""},
+			wantErr:    ErrEmptyAudience,
+		},
+	}
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: tt.scopes})
-			if err != nil {
-				t.Fatalf("GenerateAccessToken() error = %v", err)
+			got, err := accessAudience(tt.configured)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("accessAudience() error = %v, want %v", err, tt.wantErr)
 			}
-
-			claims, err := svc.ValidateToken(token)
-			if err != nil {
-				t.Fatalf("ValidateToken() error = %v", err)
-			}
-
-			// Verify scopes are correctly stored
-			if tt.scopes == nil {
-				if claims.Scopes != nil {
-					t.Errorf("Claims.Scopes = %v, want nil", claims.Scopes)
-				}
-			} else if len(tt.scopes) == 0 {
-				// Empty map might be nil or empty after JSON round trip
-				if len(claims.Scopes) != 0 {
-					t.Errorf("Claims.Scopes = %v, want empty or nil", claims.Scopes)
-				}
-			} else {
-				if len(claims.Scopes) != len(tt.scopes) {
-					t.Errorf("Claims.Scopes length = %d, want %d", len(claims.Scopes), len(tt.scopes))
-				}
-				for resource, level := range tt.scopes {
-					if claims.Scopes[resource] != level {
-						t.Errorf("Claims.Scopes[%s] = %v, want %v", resource, claims.Scopes[resource], level)
-					}
-				}
+			if tt.wantErr == nil && !slices.Equal(got, tt.want) {
+				t.Errorf("accessAudience() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestGenerateAccessToken_UsesConfiguredAudience(t *testing.T) {
+	private, public := jwttest.KeyPair(t, testKeyID)
+	iss, err := newIssuer(private, public, []string{AudienceMessaging}, testAccessExpiry, testRefreshExpiry)
+	if err != nil {
+		t.Fatalf("NewIssuer() error = %v", err)
+	}
+
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+
+	// A service not in the configured list must reject the token.
+	if _, err := mustVerifier(t, public, AudiencePublicAPI).ValidateAccessToken(token); err == nil {
+		t.Error("public-api must reject a token whose audience excludes it")
+	}
+	if _, err := mustVerifier(t, public, AudienceMessaging).ValidateAccessToken(token); err != nil {
+		t.Errorf("messaging-api should accept the token: %v", err)
+	}
+}
+
+func TestRefreshTokenAudienceIsAuthOnly(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
+
+	token, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser"})
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
+
+	claims, err := iss.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+
+	if len(claims.Audience) != 1 || claims.Audience[0] != AudienceAuth {
+		t.Errorf("refresh token audience = %v, want [%q]", claims.Audience, AudienceAuth)
+	}
+}
+
+func TestVerifierRejectsForeignAudience(t *testing.T) {
+	iss, publicAPI := newTestPair(t, AudiencePublicAPI)
+
+	serviceToken, err := iss.GenerateServiceToken(Identity{UserID: 1, Username: "auth-service"}, AudienceMessaging)
+	if err != nil {
+		t.Fatalf("GenerateServiceToken() error = %v", err)
+	}
+
+	if _, err := publicAPI.ValidateAccessToken(serviceToken); err == nil {
+		t.Error("public-api must reject a token addressed to messaging-api")
+	}
+}
+
+func TestVerifierRejectsBrowserTokenAtMessaging(t *testing.T) {
+	iss, messaging := newTestPair(t, AudienceMessaging)
+
+	access, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+
+	if _, err := messaging.ValidateAccessToken(access); err == nil {
+		t.Error("messaging-api must reject a browser access token")
+	}
+}
+
+func TestVerifierRejectsRefreshTokenAtOtherServices(t *testing.T) {
+	iss, filesAPI := newTestPair(t, AudienceFilesAPI)
+
+	refresh, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser"})
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
+
+	if _, err := filesAPI.ValidateToken(refresh); err == nil {
+		t.Error("files-api must reject a refresh token")
+	}
+}
+
+func TestGenerateServiceToken(t *testing.T) {
+	iss, messaging := newTestPair(t, AudienceMessaging)
+
+	id := Identity{UserID: 1, Username: "auth-service", Scopes: map[string]string{"emails": "edit"}}
+	token, err := iss.GenerateServiceToken(id, AudienceMessaging)
+	if err != nil {
+		t.Fatalf("GenerateServiceToken() error = %v", err)
+	}
+
+	claims, err := messaging.ValidateAccessToken(token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken() error = %v", err)
+	}
+	if len(claims.Audience) != 1 || claims.Audience[0] != AudienceMessaging {
+		t.Errorf("service token audience = %v, want [%q]", claims.Audience, AudienceMessaging)
+	}
+	if claims.Scopes["emails"] != "edit" {
+		t.Errorf("Claims.Scopes[emails] = %q, want edit", claims.Scopes["emails"])
+	}
+}
+
+func TestGenerateServiceToken_InputValidation(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
+	id := Identity{UserID: 1, Username: "auth-service"}
+
+	if _, err := iss.GenerateServiceToken(id, ""); !errors.Is(err, ErrEmptyAudience) {
+		t.Errorf("GenerateServiceToken() error = %v, want %v", err, ErrEmptyAudience)
+	}
+	if _, err := iss.GenerateServiceToken(Identity{Username: "auth-service"}, AudienceMessaging); !errors.Is(err, ErrInvalidUserID) {
+		t.Error("GenerateServiceToken() should reject a non-positive user id")
+	}
+}
+
+func TestVerifierRejectsForeignIssuer(t *testing.T) {
+	private, public := jwttest.KeyPair(t, testKeyID)
+
+	_, key, err := parsePrivateKey(private)
+	if err != nil {
+		t.Fatalf("parsePrivateKey() error = %v", err)
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, Claims{
+		Identity:  Identity{UserID: 1, Username: "testuser"},
+		TokenType: TokenTypeAccess,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    "someone-else",
+			Audience:  []string{AudiencePublicAPI},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+	token.Header["kid"] = testKeyID
+	signed, err := token.SignedString(key)
+	if err != nil {
+		t.Fatalf("SignedString() error = %v", err)
+	}
+
+	// The signature and audience check out; only `iss` is wrong.
+	ver := mustVerifier(t, public, AudiencePublicAPI)
+	if _, err := ver.ValidateAccessToken(signed); err == nil {
+		t.Error("ValidateAccessToken() should reject a foreign issuer")
+	}
+}
+
+// =============================================================================
+// Key Rotation Tests
+// =============================================================================
+
+func TestKeyRotation_VerifierAcceptsBothKeys(t *testing.T) {
+	oldPrivate, oldPublic := jwttest.KeyPair(t, "old")
+	newPrivate, newPublic := jwttest.KeyPair(t, "new")
+	both := oldPublic + "," + newPublic
+
+	oldIssuer := mustIssuer(t, oldPrivate, both, testAccessExpiry, testRefreshExpiry)
+	newIssuer := mustIssuer(t, newPrivate, both, testAccessExpiry, testRefreshExpiry)
+	ver := mustVerifier(t, both, AudiencePublicAPI)
+
+	id := Identity{UserID: 1, Username: "testuser"}
+	for name, iss := range map[string]Issuer{"old": oldIssuer, "new": newIssuer} {
+		token, err := iss.GenerateAccessToken(id)
+		if err != nil {
+			t.Fatalf("GenerateAccessToken(%s) error = %v", name, err)
+		}
+		if _, err := ver.ValidateAccessToken(token); err != nil {
+			t.Errorf("ValidateAccessToken(%s) error = %v", name, err)
+		}
+	}
+
+	// Retiring the old key must invalidate tokens it signed.
+	retired := mustVerifier(t, newPublic, AudiencePublicAPI)
+	oldToken, err := oldIssuer.GenerateAccessToken(id)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken(old) error = %v", err)
+	}
+	if _, err := retired.ValidateAccessToken(oldToken); !errors.Is(err, ErrUnknownKeyID) {
+		t.Errorf("ValidateAccessToken(retired) error = %v, want %v", err, ErrUnknownKeyID)
 	}
 }
 
@@ -460,96 +865,11 @@ func TestGenerateAccessToken_WithScopes(t *testing.T) {
 // GenerateRefreshToken Tests
 // =============================================================================
 
-func TestGenerateRefreshToken(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
-
-	userID := int64(123)
-	username := "testuser"
-	scopes := map[string]string{"profile": "read"}
-
-	token, err := svc.GenerateRefreshToken(Identity{UserID: userID, Username: username, Scopes: scopes})
-	if err != nil {
-		t.Fatalf("GenerateRefreshToken() error = %v", err)
-	}
-	if token == "" {
-		t.Fatal("Generated refresh token is empty")
-	}
-
-	// Verify token contains correct claims
-	claims, err := svc.ValidateToken(token)
-	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
-	}
-	if claims.UserID != userID {
-		t.Errorf("Claims.UserID = %v, want %v", claims.UserID, userID)
-	}
-	if claims.Username != username {
-		t.Errorf("Claims.Username = %v, want %v", claims.Username, username)
-	}
-}
-
-func TestGenerateRefreshToken_WithScopes(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
-
-	tests := []struct {
-		name   string
-		scopes map[string]string
-	}{
-		{
-			name:   "with scopes",
-			scopes: map[string]string{"profile": "read", "projects": "edit", "users": "delete"},
-		},
-		{
-			name:   "empty scopes",
-			scopes: map[string]string{},
-		},
-		{
-			name:   "nil scopes",
-			scopes: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			token, err := svc.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser", Scopes: tt.scopes})
-			if err != nil {
-				t.Fatalf("GenerateRefreshToken() error = %v", err)
-			}
-
-			claims, err := svc.ValidateToken(token)
-			if err != nil {
-				t.Fatalf("ValidateToken() error = %v", err)
-			}
-
-			// Verify scopes are correctly stored
-			if tt.scopes == nil {
-				if claims.Scopes != nil {
-					t.Errorf("Claims.Scopes = %v, want nil", claims.Scopes)
-				}
-			} else if len(tt.scopes) == 0 {
-				// Empty map might be nil or empty after JSON round trip
-				if len(claims.Scopes) != 0 {
-					t.Errorf("Claims.Scopes = %v, want empty or nil", claims.Scopes)
-				}
-			} else {
-				if len(claims.Scopes) != len(tt.scopes) {
-					t.Errorf("Claims.Scopes length = %d, want %d", len(claims.Scopes), len(tt.scopes))
-				}
-				for resource, level := range tt.scopes {
-					if claims.Scopes[resource] != level {
-						t.Errorf("Claims.Scopes[%s] = %v, want %v", resource, claims.Scopes[resource], level)
-					}
-				}
-			}
-		})
-	}
-}
-
 func TestGenerateToken_ScopesDefensiveCopy(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	originalScopes := map[string]string{"profile": "read", "projects": "edit"}
-	token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: originalScopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: originalScopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -559,7 +879,7 @@ func TestGenerateToken_ScopesDefensiveCopy(t *testing.T) {
 	originalScopes["newkey"] = "read"
 
 	// Validate token and verify claims weren't affected by mutation
-	claims, err := svc.ValidateToken(token)
+	claims, err := iss.ValidateToken(token)
 	if err != nil {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
@@ -576,69 +896,23 @@ func TestGenerateToken_ScopesDefensiveCopy(t *testing.T) {
 	}
 }
 
-func TestGenerateRefreshToken_InputValidation(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
-
-	tests := []struct {
-		name     string
-		userID   int64
-		username string
-		wantErr  error
-	}{
-		{
-			name:     "valid inputs",
-			userID:   123,
-			username: "testuser",
-			wantErr:  nil,
-		},
-		{
-			name:     "zero user ID",
-			userID:   0,
-			username: "testuser",
-			wantErr:  ErrInvalidUserID,
-		},
-		{
-			name:     "negative user ID",
-			userID:   -1,
-			username: "testuser",
-			wantErr:  ErrInvalidUserID,
-		},
-		{
-			name:     "empty username",
-			userID:   123,
-			username: "",
-			wantErr:  ErrEmptyUsername,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			scopes := map[string]string{"profile": "read"}
-			_, err := svc.GenerateRefreshToken(Identity{UserID: tt.userID, Username: tt.username, Scopes: scopes})
-			if err != tt.wantErr {
-				t.Errorf("GenerateRefreshToken() error = %v, wantErr %v", err, tt.wantErr)
-			}
-		})
-	}
-}
-
 // =============================================================================
 // ValidateToken Tests
 // =============================================================================
 
 func TestValidateToken_ValidToken(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	userID := int64(1)
 	username := "testuser"
 	scopes := map[string]string{"profile": "read"}
 
-	token, err := svc.GenerateAccessToken(Identity{UserID: userID, Username: username, Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: userID, Username: username, Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	claims, err := svc.ValidateToken(token)
+	claims, err := iss.ValidateToken(token)
 	if err != nil {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
@@ -651,12 +925,13 @@ func TestValidateToken_ValidToken(t *testing.T) {
 }
 
 func TestValidateToken_ExpiredToken(t *testing.T) {
-	// Create service with very short expiry
-	shortExpiry := 1 * time.Millisecond
-	svc, _ := NewService(testSecret, shortExpiry, testRefreshExpiry)
+	t.Parallel()
+
+	// Create issuer with very short expiry
+	iss := newTestIssuer(t, 1*time.Millisecond, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -664,32 +939,30 @@ func TestValidateToken_ExpiredToken(t *testing.T) {
 	// Wait for token to expire
 	time.Sleep(10 * time.Millisecond)
 
-	_, err = svc.ValidateToken(token)
-	if err == nil {
+	if _, err = iss.ValidateToken(token); err == nil {
 		t.Error("ValidateToken() should fail for expired token")
 	}
 }
 
 func TestValidateToken_InvalidSignature(t *testing.T) {
-	svc1, _ := NewService("secret1-at-least-32-chars-long-11111", testAccessExpiry, testRefreshExpiry)
-	svc2, _ := NewService("secret2-at-least-32-chars-long-22222", testAccessExpiry, testRefreshExpiry)
+	iss1 := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
+	iss2 := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	// Generate token with svc1
-	token, err := svc1.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	// Generate token with iss1
+	token, err := iss1.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	// Try to validate with svc2 (different secret)
-	_, err = svc2.ValidateToken(token)
-	if err == nil {
-		t.Error("ValidateToken() should fail for token signed with different secret")
+	// Both issuers share the key id but hold different key material
+	if _, err = iss2.ValidateToken(token); err == nil {
+		t.Error("ValidateToken() should fail for a token signed by another key")
 	}
 }
 
 func TestValidateToken_MalformedToken(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	tests := []struct {
 		name  string
@@ -705,7 +978,7 @@ func TestValidateToken_MalformedToken(t *testing.T) {
 		},
 		{
 			name:  "incomplete token",
-			token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9",
+			token: "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9",
 		},
 		{
 			name:  "token with invalid parts",
@@ -713,14 +986,13 @@ func TestValidateToken_MalformedToken(t *testing.T) {
 		},
 		{
 			name:  "invalid base64",
-			token: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.###.xyz",
+			token: "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.###.xyz",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := svc.ValidateToken(tt.token)
-			if err == nil {
+			if _, err := iss.ValidateToken(tt.token); err == nil {
 				t.Error("ValidateToken() should fail for malformed token")
 			}
 		})
@@ -728,10 +1000,10 @@ func TestValidateToken_MalformedToken(t *testing.T) {
 }
 
 func TestValidateToken_TamperedToken(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -739,50 +1011,112 @@ func TestValidateToken_TamperedToken(t *testing.T) {
 	// Tamper with the token by changing a character
 	tamperedToken := token[:len(token)-5] + "XXXXX"
 
-	_, err = svc.ValidateToken(tamperedToken)
-	if err == nil {
+	if _, err = iss.ValidateToken(tamperedToken); err == nil {
 		t.Error("ValidateToken() should fail for tampered token")
 	}
 }
 
-func TestValidateToken_WrongSigningMethod(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+func TestValidateToken_AlgorithmConfusion(t *testing.T) {
+	private, public := jwttest.KeyPair(t, testKeyID)
+	iss := mustIssuer(t, private, public, testAccessExpiry, testRefreshExpiry)
 
-	// Create a token header claiming RS256 (RSA) instead of HS256 (HMAC)
-	// #nosec G101 - This is a test token, not actual credentials
-	tokenString := "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6InRlc3R1c2VyIiwiZXhwIjoxNzAwMDAwMDAwfQ.invalid_signature"
+	// Forge an HS256 token using the (public) verification key as the HMAC secret.
+	_, der, err := splitKeyEntry(public)
+	if err != nil {
+		t.Fatalf("splitKeyEntry() error = %v", err)
+	}
 
-	_, err := svc.ValidateToken(tokenString)
-	if err == nil {
-		t.Error("ValidateToken() should fail for token with wrong signing method")
+	forged := jwt.NewWithClaims(jwt.SigningMethodHS256, Claims{
+		Identity:  Identity{UserID: 1, Username: "attacker", Scopes: map[string]string{"heroes": "delete"}},
+		TokenType: TokenTypeAccess,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    IssuerName,
+			Audience:  []string{AudienceAuth},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+	forged.Header["kid"] = testKeyID
+	signed, err := forged.SignedString(der)
+	if err != nil {
+		t.Fatalf("SignedString() error = %v", err)
+	}
+
+	if _, err := iss.ValidateToken(signed); err == nil {
+		t.Error("ValidateToken() must reject an HS256 token signed with the public key")
 	}
 }
 
 func TestValidateToken_WrongSigningMethodNone(t *testing.T) {
-	// Create a token with signing method "none"
+	_, verifier := newTestPair(t, AudiencePublicAPI)
+
 	claims := &Claims{
-		Identity: Identity{UserID: 123, Username: "user"},
+		Identity:  Identity{UserID: 123, Username: "user"},
+		TokenType: TokenTypeAccess,
 		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    IssuerName,
+			Audience:  []string{AudiencePublicAPI},
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 		},
 	}
 	token := jwt.NewWithClaims(jwt.SigningMethodNone, claims)
+	token.Header["kid"] = testKeyID
 	tokenString, _ := token.SignedString(jwt.UnsafeAllowNoneSignatureType)
 
-	svc, _ := NewValidatorOnly(testSecret)
-	_, err := svc.ValidateToken(tokenString)
-
-	if err == nil {
+	if _, err := verifier.ValidateToken(tokenString); err == nil {
 		t.Error("ValidateToken() should fail for token with 'none' signing method")
 	}
 }
 
+func TestValidateToken_UnknownKeyID(t *testing.T) {
+	signingPrivate, signingPublic := jwttest.KeyPair(t, "signing")
+	_, trustedPublic := jwttest.KeyPair(t, "trusted")
+
+	signer := mustIssuer(t, signingPrivate, signingPublic, testAccessExpiry, testRefreshExpiry)
+	token, err := signer.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+
+	// A verifier that has never seen the signing key id rejects on lookup.
+	ver := mustVerifier(t, trustedPublic, AudienceAuth)
+	if _, err := ver.ValidateToken(token); !errors.Is(err, ErrUnknownKeyID) {
+		t.Errorf("ValidateToken() error = %v, want %v", err, ErrUnknownKeyID)
+	}
+}
+
+func TestValidateToken_MissingKeyID(t *testing.T) {
+	private, public := jwttest.KeyPair(t, testKeyID)
+	_, key, err := parsePrivateKey(private)
+	if err != nil {
+		t.Fatalf("parsePrivateKey() error = %v", err)
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodEdDSA, Claims{
+		Identity:  Identity{UserID: 1, Username: "testuser"},
+		TokenType: TokenTypeAccess,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    IssuerName,
+			Audience:  []string{AudiencePublicAPI},
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
+		},
+	})
+	signed, err := token.SignedString(key)
+	if err != nil {
+		t.Fatalf("SignedString() error = %v", err)
+	}
+
+	ver := mustVerifier(t, public, AudiencePublicAPI)
+	if _, err := ver.ValidateToken(signed); !errors.Is(err, ErrUnknownKeyID) {
+		t.Errorf("ValidateToken() error = %v, want %v", err, ErrUnknownKeyID)
+	}
+}
+
 func TestValidateToken_InvalidClaimsStructure(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
 	// Generate a valid token
-	validToken, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	validToken, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -797,26 +1131,26 @@ func TestValidateToken_InvalidClaimsStructure(t *testing.T) {
 	corruptedPayload := "eyJpbnZhbGlkIjoiY2xhaW1zIn0" // {"invalid":"claims"}
 	corruptedToken := parts[0] + "." + corruptedPayload + "." + parts[2]
 
-	_, err = svc.ValidateToken(corruptedToken)
-	if err == nil {
+	if _, err = iss.ValidateToken(corruptedToken); err == nil {
 		t.Error("ValidateToken() should fail for token with invalid claims structure")
 	}
 }
 
 func TestValidateToken_ExpiryBoundary(t *testing.T) {
+	t.Parallel()
+
 	// Test token validation exactly at expiry boundary
 	// JWT timestamps are truncated to seconds, so use multi-second expiry
-	shortExpiry := 3 * time.Second
-	svc, _ := NewService(testSecret, shortExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, 3*time.Second, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
 	// Should be valid immediately
-	claims, err := svc.ValidateToken(token)
+	claims, err := iss.ValidateToken(token)
 	if err != nil {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
@@ -828,7 +1162,7 @@ func TestValidateToken_ExpiryBoundary(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	// Should still be valid
-	claims, err = svc.ValidateToken(token)
+	claims, err = iss.ValidateToken(token)
 	if err != nil {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
@@ -840,48 +1174,8 @@ func TestValidateToken_ExpiryBoundary(t *testing.T) {
 	time.Sleep(2500 * time.Millisecond)
 
 	// Should now be invalid
-	_, err = svc.ValidateToken(token)
-	if err == nil {
+	if _, err = iss.ValidateToken(token); err == nil {
 		t.Error("ValidateToken() should fail for expired token")
-	}
-}
-
-func TestValidateToken_RemainingTime(t *testing.T) {
-	svc, _ := NewService(testSecret, 10*time.Second, testRefreshExpiry)
-
-	scopes := map[string]string{"profile": "read"}
-	token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
-	if err != nil {
-		t.Fatalf("GenerateAccessToken() error = %v", err)
-	}
-
-	// Validate immediately and check remaining time
-	claims, err := svc.ValidateToken(token)
-	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
-	}
-
-	remaining := time.Until(claims.ExpiresAt.Time)
-
-	// Should be close to 10 seconds (within 1 second tolerance)
-	if remaining < 9*time.Second || remaining > 11*time.Second {
-		t.Errorf("Remaining time = %v, want ~10s", remaining)
-	}
-
-	// Wait 2 seconds
-	time.Sleep(2 * time.Second)
-
-	// Check remaining time again
-	claims, err = svc.ValidateToken(token)
-	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
-	}
-
-	remaining = time.Until(claims.ExpiresAt.Time)
-
-	// Should be close to 8 seconds (within 1 second tolerance)
-	if remaining < 7*time.Second || remaining > 9*time.Second {
-		t.Errorf("Remaining time = %v, want ~8s", remaining)
 	}
 }
 
@@ -893,51 +1187,26 @@ func TestGetExpiryMethods(t *testing.T) {
 	customAccess := 30 * time.Minute
 	customRefresh := 720 * time.Hour
 
-	svc, _ := NewService(testSecret, customAccess, customRefresh)
+	iss := newTestIssuer(t, customAccess, customRefresh)
 
-	if got := svc.GetAccessExpiry(); got != customAccess {
+	if got := iss.GetAccessExpiry(); got != customAccess {
 		t.Errorf("GetAccessExpiry() = %v, want %v", got, customAccess)
 	}
-	if got := svc.GetRefreshExpiry(); got != customRefresh {
+	if got := iss.GetRefreshExpiry(); got != customRefresh {
 		t.Errorf("GetRefreshExpiry() = %v, want %v", got, customRefresh)
 	}
 }
 
-func TestAccessTokenExpiry(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
-
-	scopes := map[string]string{"profile": "read"}
-	token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
-	if err != nil {
-		t.Fatalf("GenerateAccessToken() error = %v", err)
-	}
-
-	claims, err := svc.ValidateToken(token)
-	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
-	}
-
-	// Calculate expected expiry
-	expectedExpiry := claims.IssuedAt.Add(testAccessExpiry)
-	actualExpiry := claims.ExpiresAt.Time
-
-	// Should be within 1 second due to timing
-	diff := actualExpiry.Sub(expectedExpiry)
-	if diff < -time.Second || diff > time.Second {
-		t.Errorf("Expiry difference = %v, want within 1 second", diff)
-	}
-}
-
 func TestRefreshTokenExpiry(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := svc.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
 
-	claims, err := svc.ValidateToken(token)
+	claims, err := iss.ValidateToken(token)
 	if err != nil {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
@@ -953,12 +1222,12 @@ func TestRefreshTokenExpiry(t *testing.T) {
 	}
 
 	// Refresh token should expire much later than access token
-	accessToken, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	accessToken, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	accessClaims, err := svc.ValidateToken(accessToken)
+	accessClaims, err := iss.ValidateToken(accessToken)
 	if err != nil {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
@@ -968,35 +1237,17 @@ func TestRefreshTokenExpiry(t *testing.T) {
 	}
 }
 
-func TestVeryShortExpiry(t *testing.T) {
-	svc, _ := NewService(testSecret, 1*time.Nanosecond, testRefreshExpiry)
-
-	scopes := map[string]string{"profile": "read"}
-	token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
-	if err != nil {
-		t.Fatalf("GenerateAccessToken() error = %v", err)
-	}
-
-	// Token should be expired almost immediately due to JWT second precision
-	time.Sleep(100 * time.Millisecond)
-
-	_, err = svc.ValidateToken(token)
-	if err == nil {
-		t.Error("ValidateToken() should fail for token with nanosecond expiry")
-	}
-}
-
 func TestVeryLongExpiry(t *testing.T) {
 	longExpiry := 8760 * time.Hour // 1 year
-	svc, _ := NewService(testSecret, longExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, longExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
-	claims, err := svc.ValidateToken(token)
+	claims, err := iss.ValidateToken(token)
 	if err != nil {
 		t.Fatalf("ValidateToken() error = %v", err)
 	}
@@ -1006,6 +1257,92 @@ func TestVeryLongExpiry(t *testing.T) {
 	diff := claims.ExpiresAt.Sub(expectedExpiry)
 	if diff < -time.Second || diff > time.Second {
 		t.Errorf("Expiry difference = %v, want within 1 second", diff)
+	}
+}
+
+// =============================================================================
+// Token Type Tests
+// =============================================================================
+
+func TestGenerateToken_TokenType(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
+
+	access, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: nil})
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+	accessClaims, err := iss.ValidateToken(access)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+	if accessClaims.TokenType != TokenTypeAccess {
+		t.Errorf("access TokenType = %q, want %q", accessClaims.TokenType, TokenTypeAccess)
+	}
+
+	refresh, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser", Scopes: nil})
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
+	refreshClaims, err := iss.ValidateToken(refresh)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+	if refreshClaims.TokenType != TokenTypeRefresh {
+		t.Errorf("refresh TokenType = %q, want %q", refreshClaims.TokenType, TokenTypeRefresh)
+	}
+}
+
+func TestValidateTyped_RejectsTheOtherTokenType(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
+	id := Identity{UserID: 1, Username: "testuser", Scopes: nil}
+
+	access, err := iss.GenerateAccessToken(id)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+	refresh, err := iss.GenerateRefreshToken(id)
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
+
+	if _, err := iss.ValidateAccessToken(access); err != nil {
+		t.Errorf("ValidateAccessToken(access) error = %v", err)
+	}
+	if _, err := iss.ValidateRefreshToken(refresh); err != nil {
+		t.Errorf("ValidateRefreshToken(refresh) error = %v", err)
+	}
+	if _, err := iss.ValidateAccessToken(refresh); !errors.Is(err, ErrWrongTokenType) {
+		t.Errorf("ValidateAccessToken(refresh) error = %v, want %v", err, ErrWrongTokenType)
+	}
+	if _, err := iss.ValidateRefreshToken(access); !errors.Is(err, ErrWrongTokenType) {
+		t.Errorf("ValidateRefreshToken(access) error = %v, want %v", err, ErrWrongTokenType)
+	}
+	if _, err := iss.ValidateAccessToken("not-a-token"); errors.Is(err, ErrWrongTokenType) {
+		t.Error("a malformed token must fail validation, not the type check")
+	}
+}
+
+func TestGenerateAccessToken_ProfileClaims(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
+
+	token, err := iss.GenerateAccessToken(Identity{
+		UserID:        7,
+		Username:      "kaladin",
+		Email:         "kal@example.com",
+		EmailVerified: true,
+		DisplayName:   "Kaladin Stormblessed",
+		Scopes:        map[string]string{"heroes": "edit"},
+	})
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+
+	claims, err := iss.ValidateToken(token)
+	if err != nil {
+		t.Fatalf("ValidateToken() error = %v", err)
+	}
+	if claims.Email != "kal@example.com" || !claims.EmailVerified || claims.DisplayName != "Kaladin Stormblessed" {
+		t.Errorf("profile claims = %q/%v/%q", claims.Email, claims.EmailVerified, claims.DisplayName)
 	}
 }
 
@@ -1062,7 +1399,7 @@ func TestGetTTL(t *testing.T) {
 // =============================================================================
 
 func TestConcurrentTokenGeneration(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	concurrency := 10
 	done := make(chan bool, concurrency)
@@ -1072,7 +1409,7 @@ func TestConcurrentTokenGeneration(t *testing.T) {
 	for i := range concurrency {
 		go func(userID int64) {
 			scopes := map[string]string{"profile": "read"}
-			token, err := svc.GenerateAccessToken(Identity{UserID: userID, Username: "testuser", Scopes: scopes})
+			token, err := iss.GenerateAccessToken(Identity{UserID: userID, Username: "testuser", Scopes: scopes})
 			if err != nil {
 				t.Errorf("GenerateAccessToken() error = %v", err)
 			}
@@ -1097,11 +1434,11 @@ func TestConcurrentTokenGeneration(t *testing.T) {
 		}
 
 		if seen[token] {
-			t.Errorf("Duplicate token generated: %s", token)
+			t.Error("Duplicate token generated")
 		}
 		seen[token] = true
 
-		claims, err := svc.ValidateToken(token)
+		claims, err := iss.ValidateToken(token)
 		if err != nil {
 			t.Errorf("ValidateToken() error = %v", err)
 		}
@@ -1117,29 +1454,29 @@ func TestConcurrentTokenGeneration(t *testing.T) {
 }
 
 func TestConcurrentTokenValidation(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
 	// Generate a single token
-	token, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
 
 	concurrency := 20
 	done := make(chan bool, concurrency)
-	errors := make(chan error, concurrency)
+	errs := make(chan error, concurrency)
 
 	// Validate token concurrently
 	for range concurrency {
 		go func() {
-			claims, err := svc.ValidateToken(token)
+			claims, err := iss.ValidateToken(token)
 			if err != nil {
-				errors <- err
+				errs <- err
 			} else if claims == nil {
-				errors <- jwt.ErrTokenInvalidClaims
+				errs <- jwt.ErrTokenInvalidClaims
 			} else if claims.UserID != 1 {
-				errors <- jwt.ErrTokenInvalidClaims
+				errs <- jwt.ErrTokenInvalidClaims
 			}
 			done <- true
 		}()
@@ -1149,92 +1486,10 @@ func TestConcurrentTokenValidation(t *testing.T) {
 	for range concurrency {
 		<-done
 	}
-	close(errors)
+	close(errs)
 
 	// Check for any errors
-	for err := range errors {
+	for err := range errs {
 		t.Errorf("Concurrent validation error: %v", err)
-	}
-}
-
-func TestGenerateToken_TokenType(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
-
-	access, err := svc.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: nil})
-	if err != nil {
-		t.Fatalf("GenerateAccessToken() error = %v", err)
-	}
-	accessClaims, err := svc.ValidateToken(access)
-	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
-	}
-	if accessClaims.TokenType != TokenTypeAccess {
-		t.Errorf("access TokenType = %q, want %q", accessClaims.TokenType, TokenTypeAccess)
-	}
-
-	refresh, err := svc.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser", Scopes: nil})
-	if err != nil {
-		t.Fatalf("GenerateRefreshToken() error = %v", err)
-	}
-	refreshClaims, err := svc.ValidateToken(refresh)
-	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
-	}
-	if refreshClaims.TokenType != TokenTypeRefresh {
-		t.Errorf("refresh TokenType = %q, want %q", refreshClaims.TokenType, TokenTypeRefresh)
-	}
-}
-
-func TestValidateTyped_RejectsTheOtherTokenType(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
-	id := Identity{UserID: 1, Username: "testuser", Scopes: nil}
-
-	access, err := svc.GenerateAccessToken(id)
-	if err != nil {
-		t.Fatalf("GenerateAccessToken() error = %v", err)
-	}
-	refresh, err := svc.GenerateRefreshToken(id)
-	if err != nil {
-		t.Fatalf("GenerateRefreshToken() error = %v", err)
-	}
-
-	if _, err := svc.ValidateAccessToken(access); err != nil {
-		t.Errorf("ValidateAccessToken(access) error = %v", err)
-	}
-	if _, err := svc.ValidateRefreshToken(refresh); err != nil {
-		t.Errorf("ValidateRefreshToken(refresh) error = %v", err)
-	}
-	if _, err := svc.ValidateAccessToken(refresh); !errors.Is(err, ErrWrongTokenType) {
-		t.Errorf("ValidateAccessToken(refresh) error = %v, want %v", err, ErrWrongTokenType)
-	}
-	if _, err := svc.ValidateRefreshToken(access); !errors.Is(err, ErrWrongTokenType) {
-		t.Errorf("ValidateRefreshToken(access) error = %v, want %v", err, ErrWrongTokenType)
-	}
-	if _, err := svc.ValidateAccessToken("not-a-token"); errors.Is(err, ErrWrongTokenType) {
-		t.Error("a malformed token must fail validation, not the type check")
-	}
-}
-
-func TestGenerateAccessToken_ProfileClaims(t *testing.T) {
-	svc, _ := NewService(testSecret, testAccessExpiry, testRefreshExpiry)
-
-	token, err := svc.GenerateAccessToken(Identity{
-		UserID:        7,
-		Username:      "kaladin",
-		Email:         "kal@example.com",
-		EmailVerified: true,
-		DisplayName:   "Kaladin Stormblessed",
-		Scopes:        map[string]string{"heroes": "edit"},
-	})
-	if err != nil {
-		t.Fatalf("GenerateAccessToken() error = %v", err)
-	}
-
-	claims, err := svc.ValidateToken(token)
-	if err != nil {
-		t.Fatalf("ValidateToken() error = %v", err)
-	}
-	if claims.Email != "kal@example.com" || !claims.EmailVerified || claims.DisplayName != "Kaladin Stormblessed" {
-		t.Errorf("profile claims = %q/%v/%q", claims.Email, claims.EmailVerified, claims.DisplayName)
 	}
 }

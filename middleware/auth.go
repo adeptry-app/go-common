@@ -48,13 +48,14 @@ func abortUnauthorized(c *gin.Context, reason string) {
 
 // AuthMiddleware provides JWT token validation
 type AuthMiddleware struct {
-	jwtService jwt.Service
+	verifier jwt.Verifier
 }
 
-// NewAuthMiddleware creates a new auth middleware instance with JWT service
-func NewAuthMiddleware(jwtService jwt.Service) *AuthMiddleware {
+// NewAuthMiddleware creates a new auth middleware instance. It takes a Verifier,
+// not an Issuer, so a service behind this middleware cannot mint tokens.
+func NewAuthMiddleware(verifier jwt.Verifier) *AuthMiddleware {
 	return &AuthMiddleware{
-		jwtService: jwtService,
+		verifier: verifier,
 	}
 }
 
@@ -68,7 +69,7 @@ func (m *AuthMiddleware) ValidateToken() gin.HandlerFunc {
 		}
 
 		// Validate locally; refresh tokens are only valid at the token endpoint
-		claims, err := m.jwtService.ValidateAccessToken(token)
+		claims, err := m.verifier.ValidateAccessToken(token)
 		if err != nil {
 			slog.Warn("token validation failed",
 				"error", err,

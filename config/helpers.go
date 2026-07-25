@@ -27,6 +27,23 @@ func GetEnvRequiredInt(key string) int {
 	return unprefixed.requiredInt(key)
 }
 
+// GetEnvRequiredList splits a required comma-separated variable, dropping blank
+// entries. It panics when the variable is unset or holds no usable entry.
+func GetEnvRequiredList(key string) []string {
+	raw := strings.Split(unprefixed.required(key), ",")
+	list := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		if trimmed := strings.TrimSpace(entry); trimmed != "" {
+			list = append(list, trimmed)
+		}
+	}
+
+	if len(list) == 0 {
+		panic(fmt.Sprintf("Required environment variable %s has no entries", key))
+	}
+	return list
+}
+
 // GetEnvBool returns environment variable as boolean or default if not set
 // (empty or whitespace-only counts as unset). Accepted values are
 // case-insensitive true/false/1/0 with surrounding whitespace ignored; any
