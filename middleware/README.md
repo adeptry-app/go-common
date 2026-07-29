@@ -68,7 +68,9 @@ router.Use(securityMiddleware.Apply())
 Features: CORS whitelisting, preflight handling, security headers
 (X-Content-Type-Options, X-Frame-Options, X-XSS-Protection).
 
-An unlisted `Origin` is aborted with 403 before the handler, so a cross-site
-request cannot change state and merely have its response hidden by the browser.
-A request with **no** `Origin` still passes, for service-to-service callers;
-cookie-authenticated services layer their own CSRF middleware to reject those.
+A request carrying a non-empty, unlisted `Origin` is aborted with 403 before the
+handler, rather than running it and merely having the response hidden by the
+browser. That covers the browser cases, not every cross-site request: a caller
+that omits `Origin` still reaches the handler, so cookie-authenticated services
+layer their own CSRF middleware on top. `OPTIONS` is the one exception - it is
+answered before that passthrough, so a preflight with no `Origin` gets 403.
