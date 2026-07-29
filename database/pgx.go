@@ -36,7 +36,10 @@ func WithStatementTimeout(d time.Duration) PgxPoolOption {
 		if d <= 0 {
 			return
 		}
-		c.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(d.Milliseconds(), 10)
+		// Postgres reads 0 as "no limit", so a sub-millisecond timeout must
+		// round up rather than silently disabling the cap it asked for.
+		ms := max(d.Milliseconds(), 1)
+		c.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(ms, 10)
 	}
 }
 

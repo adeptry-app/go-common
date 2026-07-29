@@ -235,3 +235,20 @@ func TestWithStatementTimeout_KeepsOtherRuntimeParams(t *testing.T) {
 		t.Errorf("application_name = %q, want worker", got)
 	}
 }
+
+// Postgres reads 0 as "no limit", so rounding down would disable the very cap
+// the caller asked for.
+func TestWithStatementTimeout_SubMillisecondRoundsUp(t *testing.T) {
+	for _, d := range []time.Duration{time.Nanosecond, 500 * time.Microsecond, 999 * time.Microsecond} {
+		t.Run(d.String(), func(t *testing.T) {
+			poolCfg, err := buildPgxConfig(testDatabaseConfig(), "worker", WithStatementTimeout(d))
+			if err != nil {
+				t.Fatalf("buildPgxConfig() error = %v", err)
+			}
+
+			if got := poolCfg.ConnConfig.RuntimeParams["statement_timeout"]; got != "1" {
+				t.Errorf("statement_timeout = %q, want \"1\"", got)
+			}
+		})
+	}
+}

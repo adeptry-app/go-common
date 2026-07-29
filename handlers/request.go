@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 	"time"
@@ -27,6 +28,13 @@ func ReadBody(c *gin.Context) ([]byte, bool) {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			RespondError(c, http.StatusRequestEntityTooLarge, "request body too large")
+			return nil, false
+		}
+		// A client too slow for ReadTimeout is not a malformed request; logging
+		// it as one hides the real cause.
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			LogAndRespondError(c, http.StatusRequestTimeout, err, "timed out reading request body")
 			return nil, false
 		}
 		RespondError(c, http.StatusBadRequest, "failed to read request body")

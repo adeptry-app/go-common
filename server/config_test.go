@@ -1,6 +1,7 @@
 package server
 
 import (
+	"math"
 	"testing"
 	"time"
 )
@@ -75,5 +76,20 @@ func TestConfig_RequestTimeoutIsIdempotent(t *testing.T) {
 
 	if cfg.WriteTimeout != 55*time.Second {
 		t.Errorf("WriteTimeout = %v, want 55s", cfg.WriteTimeout)
+	}
+}
+
+// Config is public, so an absurd RequestTimeout must not wrap negative - which
+// net/http would read as an already-expired deadline.
+func TestConfig_RequestTimeoutNearCeilingDoesNotOverflow(t *testing.T) {
+	for _, d := range []time.Duration{math.MaxInt64, math.MaxInt64 - time.Second} {
+		cfg := Config{RequestTimeout: d}.withDefaults()
+
+		if cfg.WriteTimeout <= 0 {
+			t.Errorf("RequestTimeout %v gave WriteTimeout %v, want positive", d, cfg.WriteTimeout)
+		}
+		if cfg.ReadTimeout <= 0 {
+			t.Errorf("RequestTimeout %v gave ReadTimeout %v, want positive", d, cfg.ReadTimeout)
+		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"os"
 	"os/signal"
@@ -54,8 +55,14 @@ func (c Config) withDefaults() Config {
 	// Unconditional: DefaultConfig has already filled the 30s defaults, so a
 	// RequestTimeout set afterwards would otherwise be silently ignored.
 	if c.RequestTimeout > 0 {
-		c.ReadTimeout = c.RequestTimeout + requestTimeoutMargin
-		c.WriteTimeout = c.RequestTimeout + requestTimeoutMargin
+		socket := c.RequestTimeout + requestTimeoutMargin
+		// Config is public, so a RequestTimeout near the int64 ceiling would
+		// wrap negative here - which net/http reads as an expired deadline.
+		if socket < c.RequestTimeout {
+			socket = math.MaxInt64
+		}
+		c.ReadTimeout = socket
+		c.WriteTimeout = socket
 	}
 	if c.ReadTimeout == 0 {
 		c.ReadTimeout = 30 * time.Second

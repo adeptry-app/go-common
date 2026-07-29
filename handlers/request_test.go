@@ -305,6 +305,35 @@ func TestReadBody(t *testing.T) {
 	}
 }
 
+// timeoutReader fails the way a body read does once ReadTimeout expires.
+type timeoutReader struct{}
+
+func (timeoutReader) Read([]byte) (int, error) { return 0, timeoutError{} }
+func (timeoutReader) Close() error             { return nil }
+
+type timeoutError struct{}
+
+func (timeoutError) Error() string   { return "i/o timeout" }
+func (timeoutError) Timeout() bool   { return true }
+func (timeoutError) Temporary() bool { return false }
+
+// A client too slow for ReadTimeout is not sending a malformed request, and
+// logging it as one hides the real cause.
+func TestReadBody_TimeoutIsNotABadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/", http.NoBody)
+	c.Request.Body = timeoutReader{}
+
+	if _, ok := ReadBody(c); ok {
+		t.Fatal("ReadBody() ok = true, want false")
+	}
+	if w.Code != http.StatusRequestTimeout {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusRequestTimeout)
+	}
+}
+
 func TestReadJSONBody(t *testing.T) {
 	tests := []struct {
 		name   string

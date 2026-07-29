@@ -19,9 +19,9 @@ func TestNewServiceConfig_RequestTimeout(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("ALLOWED_ORIGINS", "https://example.com")
-			if tt.env != "" {
-				t.Setenv("REQUEST_TIMEOUT", tt.env)
-			}
+			// Blank first: GetEnvDuration treats empty as unset, so the default
+			// case is exercised even when the dev environment sets the var.
+			t.Setenv("REQUEST_TIMEOUT", tt.env)
 
 			cfg := NewServiceConfig(8080)
 
