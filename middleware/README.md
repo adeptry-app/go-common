@@ -74,3 +74,48 @@ browser. That covers the browser cases, not every cross-site request: a caller
 that omits `Origin` still reaches the handler, so cookie-authenticated services
 layer their own CSRF middleware on top. `OPTIONS` is the one exception - it is
 answered before that passthrough, so a preflight with no `Origin` gets 403.
+
+## Timeout
+
+Bounds a request end to end. Handlers pass the request context down to the pool,
+so the deadline cancels the in-flight query instead of orphaning it:
+
+```go
+v1.Use(middleware.Timeout(cfg.RequestTimeout))
+```
+
+Pair it with the two server-side halves, or the deadline is only advisory:
+
+All three read the one field, `config.ServiceConfig.RequestTimeout`
+(`REQUEST_TIMEOUT`), so they cannot disagree:
+
+```go
+v1.Use(middleware.Timeout(cfg.Service.RequestTimeout))
+
+database.NewPgxPool(ctx, cfg.Database, "svc",
+    database.WithStatementTimeout(cfg.Service.RequestTimeout))
+
+serverCfg := server.DefaultConfig(port)
+serverCfg.RequestTimeout = cfg.Service.RequestTimeout
+```
+
+`statement_timeout` stops a query the caller already abandoned from holding a
+connection; `server.Config.RequestTimeout` derives the socket deadlines from the
+handler deadline, so raising it past the 30s default does not truncate the
+response mid-body.
+
+A non-positive duration disables each of the three rather than expiring
+everything instantly, so a misread config degrades to "no deadline".
+
+## BodyLimit
+
+Caps how many bytes a handler may read from a request body:
+
+```go
+v1.Use(middleware.BodyLimit(cfg.MaxBodySize))
+```
+
+Register it before anything that binds or parses, so an oversized body is
+refused while it streams instead of after it is buffered. The reader returns an
+error the handler's existing bind error path already reports, so the middleware
+writes no response of its own.

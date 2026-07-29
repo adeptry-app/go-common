@@ -25,12 +25,23 @@ type Config struct {
 	WriteTimeout time.Duration
 	// IdleTimeout is the maximum amount of time to wait for the next request (default: 120s)
 	IdleTimeout time.Duration
+	// RequestTimeout is the per-request handler deadline (see
+	// middleware.Timeout). When set it OVERRIDES ReadTimeout and WriteTimeout,
+	// so the socket cannot expire before the handler it is carrying. Leave it
+	// zero to set those two directly.
+	RequestTimeout time.Duration
 }
 
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig(port string) Config {
 	return Config{Port: port}.withDefaults()
 }
+
+// requestTimeoutMargin keeps the socket deadlines outside the handler's, so a
+// timeout surfaces as the handler's error rather than a cut connection. It
+// exceeds handlers.PostCommitTimeout, because post-commit work runs inside the
+// handler on a context the request deadline no longer bounds.
+const requestTimeoutMargin = 10 * time.Second
 
 // withDefaults fills zero fields; the sole definition of the documented defaults.
 func (c Config) withDefaults() Config {
@@ -39,6 +50,12 @@ func (c Config) withDefaults() Config {
 	}
 	if c.ShutdownTimeout == 0 {
 		c.ShutdownTimeout = 30 * time.Second
+	}
+	// Unconditional: DefaultConfig has already filled the 30s defaults, so a
+	// RequestTimeout set afterwards would otherwise be silently ignored.
+	if c.RequestTimeout > 0 {
+		c.ReadTimeout = c.RequestTimeout + requestTimeoutMargin
+		c.WriteTimeout = c.RequestTimeout + requestTimeoutMargin
 	}
 	if c.ReadTimeout == 0 {
 		c.ReadTimeout = 30 * time.Second

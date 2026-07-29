@@ -25,6 +25,21 @@ func WithPoolSize(maxConns, minConns int32) PgxPoolOption {
 	}
 }
 
+// WithStatementTimeout caps how long one statement may run, server side. Pair
+// it with a matching handler deadline: the deadline stops the caller waiting,
+// this stops the query holding a connection after the caller has gone.
+//
+// It rides the connection's startup packet, so it costs no extra round trip.
+// A non-positive d is ignored, leaving the server default (no limit).
+func WithStatementTimeout(d time.Duration) PgxPoolOption {
+	return func(c *pgxpool.Config) {
+		if d <= 0 {
+			return
+		}
+		c.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(d.Milliseconds(), 10)
+	}
+}
+
 // NewPgxPool creates a pgx connection pool from the shared DatabaseConfig
 // and verifies connectivity with a ping. appName is reported as the
 // PostgreSQL application_name (visible in pg_stat_activity).
