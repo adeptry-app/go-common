@@ -188,3 +188,67 @@ func TestPgxPoolOption_OverridesDefaults(t *testing.T) {
 		t.Errorf("MaxConnLifetime = %v, want 2h (option should override default)", poolCfg.MaxConnLifetime)
 	}
 }
+
+// =============================================================================
+// WithStatementTimeout Tests
+// =============================================================================
+
+func TestWithStatementTimeout(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		want    string
+		wantSet bool
+	}{
+		{"seconds become milliseconds", 30 * time.Second, "30000", true},
+		{"sub-second is kept", 250 * time.Millisecond, "250", true},
+		{"zero leaves the server default", 0, "", false},
+		{"negative leaves the server default", -time.Second, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			poolCfg, err := buildPgxConfig(testDatabaseConfig(), "worker", WithStatementTimeout(tt.timeout))
+			if err != nil {
+				t.Fatalf("buildPgxConfig() error = %v", err)
+			}
+
+			got, ok := poolCfg.ConnConfig.RuntimeParams["statement_timeout"]
+			if ok != tt.wantSet {
+				t.Fatalf("statement_timeout set = %v, want %v", ok, tt.wantSet)
+			}
+			if tt.wantSet && got != tt.want {
+				t.Errorf("statement_timeout = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// It must not clobber the parameters buildPgxConfig already set.
+func TestWithStatementTimeout_KeepsOtherRuntimeParams(t *testing.T) {
+	poolCfg, err := buildPgxConfig(testDatabaseConfig(), "worker", WithStatementTimeout(time.Second))
+	if err != nil {
+		t.Fatalf("buildPgxConfig() error = %v", err)
+	}
+
+	if got := poolCfg.ConnConfig.RuntimeParams["application_name"]; got != "worker" {
+		t.Errorf("application_name = %q, want worker", got)
+	}
+}
+
+// Postgres reads 0 as "no limit", so rounding down would disable the very cap
+// the caller asked for.
+func TestWithStatementTimeout_SubMillisecondRoundsUp(t *testing.T) {
+	for _, d := range []time.Duration{time.Nanosecond, 500 * time.Microsecond, 999 * time.Microsecond} {
+		t.Run(d.String(), func(t *testing.T) {
+			poolCfg, err := buildPgxConfig(testDatabaseConfig(), "worker", WithStatementTimeout(d))
+			if err != nil {
+				t.Fatalf("buildPgxConfig() error = %v", err)
+			}
+
+			if got := poolCfg.ConnConfig.RuntimeParams["statement_timeout"]; got != "1" {
+				t.Errorf("statement_timeout = %q, want \"1\"", got)
+			}
+		})
+	}
+}

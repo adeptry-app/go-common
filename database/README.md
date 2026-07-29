@@ -84,5 +84,8 @@ other scan targets.
 - `NewPgxPool(ctx, cfg, appName, opts...)` - Create a pgx connection pool
   from `config.DatabaseConfig`
 - `WithPoolSize(maxConns, minConns int32) PgxPoolOption` - Set pool sizing
+- `WithStatementTimeout(d time.Duration) PgxPoolOption` - Cap one statement server
+  side; pair with a matching handler deadline. Rides the startup packet, so it
+  costs no round trip. Non-positive leaves the server default
 - `CallJSON` / `CallBool` / `CallDiscard` / `CallInto` - Audited single-row
   SQL function calls (see above)
