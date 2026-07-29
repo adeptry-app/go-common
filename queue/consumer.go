@@ -51,6 +51,7 @@ type RabbitMQConsumer struct {
 	mu        sync.Mutex
 	closed    bool
 	consuming bool
+	runErr    error
 	runDone   chan struct{}
 	conn      *amqp.Connection
 	channel   *amqp.Channel
@@ -150,7 +151,7 @@ const (
 // message straight to the DLQ. If the context is cancelled while a message
 // is being handled, the message is requeued without consuming a retry
 // attempt.
-func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) error {
+func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) (retErr error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -161,6 +162,7 @@ func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) 
 		return ErrAlreadyConsuming
 	}
 	c.consuming = true
+	c.runErr = nil
 	runDone := make(chan struct{})
 	c.runDone = runDone
 	c.mu.Unlock()
@@ -173,6 +175,7 @@ func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) 
 		_ = c.teardown()
 		c.mu.Lock()
 		c.consuming = false
+		c.runErr = retErr
 		c.mu.Unlock()
 		close(runDone)
 	}()
@@ -201,6 +204,9 @@ func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) 
 			if c.config.ReconnectMaxAttempts > 0 && attempt > c.config.ReconnectMaxAttempts {
 				return fmt.Errorf("%w: %v", ErrReconnectFailed, err)
 			}
+			// With unlimited attempts (the default) Consume never returns, so the
+			// retry state itself has to be what health checks observe.
+			c.setRunErr(fmt.Errorf("setup failed after %d attempt(s): %w", attempt, err))
 			c.logger.Warn("Consumer setup failed, retrying",
 				"queue", c.config.Queue,
 				"attempt", attempt,
@@ -216,6 +222,7 @@ func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) 
 			continue
 		}
 		attempt = 0
+		c.setRunErr(nil)
 
 		c.logger.Info("Consumer started", "queue", c.config.Queue, "tag", c.config.ConsumerTag)
 
@@ -553,6 +560,32 @@ func (c *RabbitMQConsumer) Connection() *amqp.Connection {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.conn
+}
+
+// setRunErr records why deliveries are not flowing, or nil once they are.
+func (c *RabbitMQConsumer) setRunErr(err error) {
+	c.mu.Lock()
+	c.runErr = err
+	c.mu.Unlock()
+}
+
+// ConsumptionError reports why messages are not being consumed - either
+// Consume stopped, or it is stuck retrying setup - and nil while deliveries
+// flow or after a clean shutdown. A live broker connection does not prove
+// consumption, so register this with
+// health.NewConsumerChecker(consumer.ConsumptionError): otherwise a consumer
+// that gave up, or one reconnecting forever, leaves the endpoint green.
+func (c *RabbitMQConsumer) ConsumptionError() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if c.closed {
+		return nil
+	}
+	if errors.Is(c.runErr, context.Canceled) || errors.Is(c.runErr, context.DeadlineExceeded) {
+		return nil
+	}
+	return c.runErr
 }
 
 // teardown closes and clears the current channel and connection.

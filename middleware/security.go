@@ -40,7 +40,8 @@ func NewSecurityMiddleware(allowedOrigins []string, allowedMethods string, allow
 	}
 }
 
-// Apply returns a Gin middleware that adds security headers and validates CORS
+// Apply returns a Gin middleware that adds security headers and validates CORS.
+// A request carrying an unlisted Origin is rejected with 403 before the handler.
 func (m *SecurityMiddleware) Apply() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.Request.Header.Get("Origin")
@@ -71,6 +72,13 @@ func (m *SecurityMiddleware) Apply() gin.HandlerFunc {
 			} else {
 				c.AbortWithStatus(403)
 			}
+			return
+		}
+
+		// A browser only sends Origin cross-site or on state-changing requests,
+		// so an unlisted value is never legitimate - reject before the handler.
+		if origin != "" && !allowed {
+			c.AbortWithStatus(403)
 			return
 		}
 

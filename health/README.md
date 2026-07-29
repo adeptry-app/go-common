@@ -62,6 +62,9 @@ router.GET("/health", healthAgg.Handler())
   queue's message count under `details.messages` (DLQ visibility). With
   `degradedThreshold > 0` it turns degraded at that depth; note the default
   handler returns 503 for degraded
+- `NewConsumerChecker(provider func() error)` - Fails while a queue consumer is
+  stopped or stuck retrying setup; pass `consumer.ConsumptionError`. A connection
+  checker alone stays green in both cases
 - `NewRedisChecker(client *redis.Client)` - PING command
 - `NewMinIOChecker(client *minio.Client, bucket string)` - Bucket check
 
