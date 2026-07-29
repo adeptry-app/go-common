@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -291,6 +292,78 @@ func TestConsumerClose_AlreadyClosed(t *testing.T) {
 	err := consumer.Close()
 	if err != nil {
 		t.Errorf("Close() on already closed consumer error = %v, want nil", err)
+	}
+}
+
+// =============================================================================
+// ConsumptionError Tests
+// =============================================================================
+
+func TestConsumptionError(t *testing.T) {
+	tests := []struct {
+		name     string
+		consumer *RabbitMQConsumer
+		wantErr  error
+	}{
+		{
+			name:     "before Consume runs",
+			consumer: &RabbitMQConsumer{},
+			wantErr:  nil,
+		},
+		{
+			name:     "while deliveries flow",
+			consumer: &RabbitMQConsumer{consuming: true},
+			wantErr:  nil,
+		},
+		{
+			name: "while stuck retrying setup with unlimited attempts",
+			consumer: &RabbitMQConsumer{
+				consuming: true,
+				runErr:    fmt.Errorf("setup failed after 7 attempt(s): %w", ErrConsumeSetupFailed),
+			},
+			wantErr: ErrConsumeSetupFailed,
+		},
+		{
+			name:     "after Close",
+			consumer: &RabbitMQConsumer{closed: true, runErr: ErrConsumerClosed},
+			wantErr:  nil,
+		},
+		{
+			name:     "after Close while stuck retrying setup",
+			consumer: &RabbitMQConsumer{closed: true, runErr: ErrConsumeSetupFailed},
+			wantErr:  nil,
+		},
+		{
+			name:     "after context cancellation",
+			consumer: &RabbitMQConsumer{runErr: context.Canceled},
+			wantErr:  nil,
+		},
+		{
+			name:     "after context deadline",
+			consumer: &RabbitMQConsumer{runErr: context.DeadlineExceeded},
+			wantErr:  nil,
+		},
+		{
+			name: "after reconnect attempts exhausted",
+			consumer: &RabbitMQConsumer{
+				runErr: fmt.Errorf("%w: %v", ErrReconnectFailed, errors.New("dial tcp: refused")),
+			},
+			wantErr: ErrReconnectFailed,
+		},
+		{
+			name:     "after delivery channel closed with reconnect disabled",
+			consumer: &RabbitMQConsumer{runErr: ErrDeliveryChannelClosed},
+			wantErr:  ErrDeliveryChannelClosed,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.consumer.ConsumptionError()
+			if !errors.Is(got, tt.wantErr) {
+				t.Errorf("ConsumptionError() = %v, want %v", got, tt.wantErr)
+			}
+		})
 	}
 }
 

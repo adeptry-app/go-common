@@ -172,7 +172,9 @@ behavior.
   callers decide whether to retry.
 - `Consume` resumes delivery after reconnecting and then only returns on
   context cancellation, `Close()`, or when `ReconnectMaxAttempts` is
-  exceeded (`ErrReconnectFailed`).
+  exceeded (`ErrReconnectFailed`). With the default `0` it never gives up, so
+  register `ConsumptionError` on the health endpoint (see below) - it is the
+  only way a stuck consumer becomes visible.
 - The initial connection in the constructors remains fail-fast so
   misconfiguration is caught at startup. Wrap the constructor in a retry
   loop if you need patience at boot.
@@ -230,6 +232,21 @@ healthAgg.Register(health.NewRabbitMQCheckerWithProvider(publisher.Connection))
 
 **Do not call `conn.Close()` directly** - use `publisher.Close()` or
 `consumer.Close()` instead.
+
+## Consumer Liveness
+
+The connection check stays green both when `Consume` has given up and when it
+is looping on failed setup, so a worker must also register the consumption
+state:
+
+```go
+healthAgg.Register(health.NewConsumerChecker(consumer.ConsumptionError))
+```
+
+`ConsumptionError` is nil while deliveries flow and after a clean `Close()` or
+context cancellation. It returns the terminal error once `Consume` gives up,
+and the current setup failure while it is retrying - which is the only signal
+under the default `ReconnectMaxAttempts: 0`, where `Consume` never returns.
 
 ## DLQ Monitoring
 
