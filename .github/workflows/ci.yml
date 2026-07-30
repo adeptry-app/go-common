@@ -134,7 +134,7 @@ jobs:
       - name: Run gosec Security Scanner
         uses: securego/gosec@master
         with:
-          args: '-fmt sarif -out gosec-results.sarif ./...'
+          args: '-concurrency=4 -fmt sarif -out gosec-results.sarif ./...'
 
       - name: Fix gosec SARIF output
         if: always()
