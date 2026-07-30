@@ -131,10 +131,11 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
+      - name: Install gosec
+        run: go install github.com/securego/gosec/v2/cmd/gosec@v2.28.0
+
       - name: Run gosec Security Scanner
-        uses: securego/gosec@master
-        with:
-          args: '-concurrency=4 -fmt sarif -out gosec-results.sarif ./...'
+        run: gosec -concurrency=4 -fmt sarif -out gosec-results.sarif ./...
 
       - name: Fix gosec SARIF output
         if: always()
