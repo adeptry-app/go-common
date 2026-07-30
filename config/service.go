@@ -10,6 +10,9 @@ import (
 // defaultRequestTimeout bounds one request when REQUEST_TIMEOUT is unset.
 const defaultRequestTimeout = 30 * time.Second
 
+// defaultMaxBodySize caps a request body when MAX_BODY_SIZE is unset.
+const defaultMaxBodySize = 64 << 10 // 64 KiB
+
 // ServiceConfig holds service-level configuration (port, environment, CORS).
 // Valid environment values: "development", "staging", "production"
 type ServiceConfig struct {
@@ -17,12 +20,11 @@ type ServiceConfig struct {
 	Environment    string   `validate:"oneof=development staging production"`
 	AllowedOrigins []string `validate:"required,min=1,dive,required"`
 	SwaggerHost    string   // Optional: Swagger UI host (e.g., "api.example.com"). Empty disables swagger.
-	// RequestTimeout is the one deadline the three appliers share:
-	// middleware.Timeout, database.WithStatementTimeout and
-	// server.Config.RequestTimeout. Reading it once is what stops them
-	// disagreeing - a handler deadline outliving its socket deadline truncates
-	// the response mid-body.
+	// RequestTimeout is shared by middleware.Timeout, WithStatementTimeout and
+	// server.Config.RequestTimeout, so the three deadlines cannot disagree.
 	RequestTimeout time.Duration `validate:"min=1s"`
+	// MaxBodySize caps a request body; applied by middleware.BodyLimit.
+	MaxBodySize int64 `validate:"min=1024"`
 }
 
 // NewServiceConfig loads service configuration from environment variables.
@@ -35,6 +37,7 @@ func NewServiceConfig(defaultPort int) ServiceConfig {
 		AllowedOrigins: GetEnvRequiredList("ALLOWED_ORIGINS"),
 		SwaggerHost:    GetEnv("SWAGGER_HOST", ""),
 		RequestTimeout: GetEnvDuration("REQUEST_TIMEOUT", defaultRequestTimeout),
+		MaxBodySize:    GetEnvInt64("MAX_BODY_SIZE", defaultMaxBodySize),
 	}
 
 	validate := validator.New()

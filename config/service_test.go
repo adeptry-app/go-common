@@ -32,6 +32,43 @@ func TestNewServiceConfig_RequestTimeout(t *testing.T) {
 	}
 }
 
+func TestNewServiceConfig_MaxBodySize(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want int64
+	}{
+		{"unset takes the default", "", defaultMaxBodySize},
+		{"explicit override", "1048576", 1 << 20},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ALLOWED_ORIGINS", "https://example.com")
+			t.Setenv("MAX_BODY_SIZE", tt.env)
+
+			cfg := NewServiceConfig(8080)
+
+			if cfg.MaxBodySize != tt.want {
+				t.Errorf("MaxBodySize = %d, want %d", cfg.MaxBodySize, tt.want)
+			}
+		})
+	}
+}
+
+// A sub-KiB cap rejects payloads every service sends: a misread variable.
+func TestNewServiceConfig_RejectsTinyMaxBodySize(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
+	t.Setenv("MAX_BODY_SIZE", "512")
+
+	defer func() {
+		if recover() == nil {
+			t.Error("MAX_BODY_SIZE=512 should fail validation")
+		}
+	}()
+	NewServiceConfig(8080)
+}
+
 // The three appliers read one field; validation is what stops a value that
 // would disable them all reaching those call sites.
 func TestNewServiceConfig_RejectsSubSecondRequestTimeout(t *testing.T) {

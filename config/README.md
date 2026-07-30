@@ -29,7 +29,7 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 
 ## Configuration Types
 
-- `ServiceConfig` - Port, environment, allowed origins
+- `ServiceConfig` - Port, environment, allowed origins, request deadline, body cap
 - `DatabaseConfig` - PostgreSQL connection settings
 - `JWTConfig` - JWT signing keys, access audience, expiration (issuer only)
 - `RedisConfig` - Redis connection settings
@@ -45,6 +45,12 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 - `PORT` - Server port (default from constructor)
 - `ENVIRONMENT` - development, staging, production
 - `ALLOWED_ORIGINS` - CORS origins (required, comma-separated)
+- `SWAGGER_HOST` - Swagger UI host; empty disables swagger
+- `REQUEST_TIMEOUT` - Per-request deadline (default `30s`, minimum `1s`). Read by
+  `middleware.Timeout`, `database.WithStatementTimeout` and
+  `server.Config.RequestTimeout` so the three cannot disagree
+- `MAX_BODY_SIZE` - Request body cap in bytes (default `65536`, minimum `1024`).
+  Applied by `middleware.BodyLimit`
 
 ### DatabaseConfig
 
