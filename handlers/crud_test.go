@@ -11,7 +11,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/adeptry-app/go-common/database"
 	"github.com/adeptry-app/go-common/jwt"
@@ -231,6 +230,7 @@ func TestHandlePgxError_RendersMapping(t *testing.T) {
 	}{
 		{"no rows", pgx.ErrNoRows, http.StatusNotFound, "not found"},
 		{"unique_violation", pgErr("23505", "dup"), http.StatusConflict, "resource already exists"},
+		{"foreign_key_violation", pgErr("23503", "fk"), http.StatusBadRequest, "referenced resource not found"},
 		{"raise_exception keeps the SQL message", pgErr("P0001", "test error"), http.StatusBadRequest, "test error"},
 		{"unknown pg code", pgErr("99999", "unknown"), http.StatusInternalServerError, "internal server error"},
 		{"non-database error", errors.New("something broke"), http.StatusInternalServerError, "internal server error"},
@@ -709,19 +709,5 @@ func TestRequireAuth(t *testing.T) {
 
 	if w := performRequest(t, router, "GET", "/authed", nil); w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
-	}
-}
-
-// A pgconn error reaching HandlePgxError must not be reported as a server fault.
-func TestHandlePgxError_ConstraintIsNotAServerFault(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request, _ = http.NewRequest("GET", "/", nil)
-
-	HandlePgxError(c, &pgconn.PgError{Code: "23503", Message: "fk"})
-
-	if w.Code != http.StatusBadRequest {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }

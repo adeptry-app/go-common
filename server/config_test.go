@@ -93,3 +93,18 @@ func TestConfig_RequestTimeoutNearCeilingDoesNotOverflow(t *testing.T) {
 		}
 	}
 }
+
+// Header reading happens before the handler, so it must not inherit the
+// socket margin RequestTimeout adds to ReadTimeout.
+func TestWithDefaults_ReadHeaderTimeoutIsIndependentOfRequestTimeout(t *testing.T) {
+	cfg := DefaultConfig("8080")
+	cfg.RequestTimeout = 5 * time.Minute
+	cfg = cfg.withDefaults()
+
+	if cfg.ReadTimeout != 5*time.Minute+requestTimeoutMargin {
+		t.Errorf("ReadTimeout = %v, want %v", cfg.ReadTimeout, 5*time.Minute+requestTimeoutMargin)
+	}
+	if cfg.ReadHeaderTimeout != 10*time.Second {
+		t.Errorf("ReadHeaderTimeout = %v, want 10s", cfg.ReadHeaderTimeout)
+	}
+}

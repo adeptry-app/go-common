@@ -26,6 +26,10 @@ type Config struct {
 	WriteTimeout time.Duration
 	// IdleTimeout is the maximum amount of time to wait for the next request (default: 120s)
 	IdleTimeout time.Duration
+	// ReadHeaderTimeout bounds header reading (default: 10s). Separate from
+	// ReadTimeout, which net/http would otherwise reuse: headers arrive before
+	// the handler, so they gain nothing from RequestTimeout's socket margin.
+	ReadHeaderTimeout time.Duration
 	// RequestTimeout is the per-request handler deadline (see
 	// middleware.Timeout). When set it OVERRIDES ReadTimeout and WriteTimeout,
 	// so the socket cannot expire before the handler it is carrying. Leave it
@@ -73,6 +77,9 @@ func (c Config) withDefaults() Config {
 	if c.IdleTimeout == 0 {
 		c.IdleTimeout = 120 * time.Second
 	}
+	if c.ReadHeaderTimeout == 0 {
+		c.ReadHeaderTimeout = 10 * time.Second
+	}
 	return c
 }
 
@@ -95,11 +102,12 @@ func Run(handler http.Handler, cfg Config, logger *slog.Logger) error {
 	cfg = cfg.withDefaults()
 
 	srv := &http.Server{
-		Addr:         fmt.Sprintf(":%s", cfg.Port),
-		Handler:      handler,
-		ReadTimeout:  cfg.ReadTimeout,
-		WriteTimeout: cfg.WriteTimeout,
-		IdleTimeout:  cfg.IdleTimeout,
+		Addr:              fmt.Sprintf(":%s", cfg.Port),
+		Handler:           handler,
+		ReadTimeout:       cfg.ReadTimeout,
+		ReadHeaderTimeout: cfg.ReadHeaderTimeout,
+		WriteTimeout:      cfg.WriteTimeout,
+		IdleTimeout:       cfg.IdleTimeout,
 	}
 
 	// Channel to receive shutdown signals
