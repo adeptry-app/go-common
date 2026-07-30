@@ -252,18 +252,10 @@ func (e prefixedEnv) duration(key string, defaultValue time.Duration) time.Durat
 
 // parseRetryDelays parses comma-separated duration strings (e.g., "5s,30s,5m,30m,2h")
 func parseRetryDelays(s string) []time.Duration {
-	if s == "" {
-		return DefaultRetryDelays()
-	}
-
-	parts := strings.Split(s, ",")
+	parts := splitList(s)
 	delays := make([]time.Duration, 0, len(parts))
 
 	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
 		d, err := time.ParseDuration(part)
 		if err != nil {
 			panic(fmt.Sprintf("Invalid retry delay %q: %v", part, err))

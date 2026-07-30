@@ -26,10 +26,11 @@ Shared Go package for common code across microservices.
 | [handlers](handlers/) | Common HTTP handler utilities |
 | [logger](logger/) | Structured logging with slog |
 | [metrics](metrics/) | Prometheus metrics collection |
-| [server](server/) | HTTP server with graceful shutdown |
+| [server](server/) | Router construction and HTTP server with graceful shutdown |
 | [queue](queue/) | RabbitMQ pub/sub with reconnection, retries, and DLQ |
+| [redis](redis/) | Redis client and fixed-window counter |
+| [ratelimit](ratelimit/) | Gin rate-limit middleware |
 | [health](health/) | Dependency health checking |
-| [renderer](renderer/) | HTML email templates and their subjects |
 
 ## Quick Start
 
@@ -42,11 +43,16 @@ import (
     "github.com/adeptry-app/go-common/database"
     "github.com/adeptry-app/go-common/health"
     "github.com/adeptry-app/go-common/jwt"
+    "github.com/adeptry-app/go-common/logger"
+    "github.com/adeptry-app/go-common/metrics"
     "github.com/adeptry-app/go-common/middleware"
+    "github.com/adeptry-app/go-common/server"
 )
 
 // Configuration
 dbCfg := config.NewDatabaseConfig()
+appLogger := logger.New(logger.Config{ServiceName: "example"})
+metricsCollector := metrics.New(metrics.Config{ServiceName: "example"})
 
 // Database
 db, err := database.Connect(dbCfg)
@@ -66,6 +72,12 @@ if err != nil {
     log.Fatalf("jwt verifier: %v", err)
 }
 authMiddleware := middleware.NewAuthMiddleware(verifier)
+
+// Router: trusted proxies, recovery, request logging, metrics and CORS
+router, err := server.NewRouter(config.NewServiceConfig(8080), appLogger, metricsCollector)
+if err != nil {
+    log.Fatalf("router: %v", err)
+}
 
 // Health checks
 healthAgg := health.NewAggregator(3 * time.Second)

@@ -29,7 +29,8 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 
 ## Configuration Types
 
-- `ServiceConfig` - Port, environment, allowed origins, request deadline, body cap
+- `ServiceConfig` - Port, environment, allowed origins, request deadline, body
+  cap, trusted proxies
 - `DatabaseConfig` - PostgreSQL connection settings
 - `JWTConfig` - JWT signing keys, access audience, expiration (issuer only)
 - `RedisConfig` - Redis connection settings
@@ -51,6 +52,13 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
   `server.Config.RequestTimeout` so the three cannot disagree
 - `MAX_BODY_SIZE` - Request body cap in bytes (default `65536`, minimum `1024`).
   Applied by `middleware.BodyLimit`
+- `TRUSTED_PROXIES` - CIDRs whose `X-Forwarded-For` gin may believe,
+  comma-separated (default: loopback plus RFC1918/ULA). Applied by
+  `server.NewRouter`; gin trusts every peer until it is, which makes
+  `c.ClientIP()` caller-controlled
+- `CORS_ALLOWED_METHODS` - `Access-Control-Allow-Methods`, comma-separated
+  (default `GET,POST,PUT,PATCH,DELETE,OPTIONS`). Narrow it to the verbs the
+  service actually routes
 
 ### DatabaseConfig
 
