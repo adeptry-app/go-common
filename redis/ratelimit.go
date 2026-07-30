@@ -11,14 +11,16 @@ import (
 
 // bumpScript increments and arms the window atomically, re-arming a lost TTL,
 // and reports the seconds left so a caller can send an exact Retry-After.
+// PTTL, not TTL: TTL reports 0 for a sub-second remainder, and Retry-After: 0
+// sends the client straight back into another rejection.
 var bumpScript = goredis.NewScript(`
 local count = redis.call('INCR', KEYS[1])
-local ttl = redis.call('TTL', KEYS[1])
-if count == 1 or ttl < 0 then
+local pttl = redis.call('PTTL', KEYS[1])
+if count == 1 or pttl < 0 then
   redis.call('EXPIRE', KEYS[1], ARGV[1])
-  ttl = tonumber(ARGV[1])
+  return {count, tonumber(ARGV[1])}
 end
-return {count, ttl}
+return {count, math.max(1, math.ceil(pttl / 1000))}
 `)
 
 // refundScript decrements only a bucket that still exists.

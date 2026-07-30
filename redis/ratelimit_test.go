@@ -77,15 +77,30 @@ func TestBump_RoundsASubSecondWindowUp(t *testing.T) {
 	}
 }
 
-// Retry-After is built from this, so it must shrink as the window drains.
+// Retry-After is built from this, so it must shrink as the window drains and
+// never reach 0 - a client honouring it would retry straight into another 429.
 func TestBump_ReportsTheRemainingWindow(t *testing.T) {
-	client, mr := newTestClient(t)
+	tests := []struct {
+		name    string
+		elapsed time.Duration
+		want    int64
+	}{
+		{"most of the window left", 45 * time.Second, 15},
+		{"a partial second left", 59500 * time.Millisecond, 1},
+		{"under a millisecond left", time.Minute - time.Microsecond, 1},
+	}
 
-	bump(t, client, "k", time.Minute)
-	mr.FastForward(45 * time.Second)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client, mr := newTestClient(t)
 
-	if _, ttl := bump(t, client, "k", time.Minute); ttl != 15 {
-		t.Errorf("ttl = %d, want 15", ttl)
+			bump(t, client, "k", time.Minute)
+			mr.FastForward(tt.elapsed)
+
+			if _, ttl := bump(t, client, "k", time.Minute); ttl != tt.want {
+				t.Errorf("ttl = %d, want %d", ttl, tt.want)
+			}
+		})
 	}
 }
 

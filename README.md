@@ -43,12 +43,16 @@ import (
     "github.com/adeptry-app/go-common/database"
     "github.com/adeptry-app/go-common/health"
     "github.com/adeptry-app/go-common/jwt"
+    "github.com/adeptry-app/go-common/logger"
+    "github.com/adeptry-app/go-common/metrics"
     "github.com/adeptry-app/go-common/middleware"
     "github.com/adeptry-app/go-common/server"
 )
 
 // Configuration
 dbCfg := config.NewDatabaseConfig()
+appLogger := logger.New(logger.Config{ServiceName: "example"})
+metricsCollector := metrics.New(metrics.Config{ServiceName: "example"})
 
 // Database
 db, err := database.Connect(dbCfg)
