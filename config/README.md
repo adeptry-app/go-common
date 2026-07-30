@@ -90,8 +90,7 @@ See the `jwt` package README for the key format and rotation order.
 - `S3_ENDPOINT` - Storage endpoint URL (required)
 - `S3_ACCESS_KEY`, `S3_SECRET_KEY` - Both or neither; omit to use AWS IAM role credentials
 - `S3_USE_SSL` - Optional (default false)
-- `S3_IMAGES_BUCKET`, `S3_DOCUMENTS_BUCKET`, `S3_MINIATURES_BUCKET`,
-  `S3_AVATARS_BUCKET` - Optional, default to the local MinIO bucket names
+- Bucket names are not here; the consuming service configures its own
 
 ### RabbitMQConfig
 
