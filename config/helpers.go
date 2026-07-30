@@ -27,19 +27,34 @@ func GetEnvRequiredInt(key string) int {
 	return unprefixed.requiredInt(key)
 }
 
-// GetEnvRequiredList splits a required comma-separated variable, dropping blank
-// entries. It panics when the variable is unset or holds no usable entry.
-func GetEnvRequiredList(key string) []string {
-	raw := strings.Split(unprefixed.required(key), ",")
-	list := make([]string, 0, len(raw))
-	for _, entry := range raw {
+// splitList splits a comma-separated value, dropping blank entries.
+func splitList(raw string) []string {
+	parts := strings.Split(raw, ",")
+	list := make([]string, 0, len(parts))
+	for _, entry := range parts {
 		if trimmed := strings.TrimSpace(entry); trimmed != "" {
 			list = append(list, trimmed)
 		}
 	}
+	return list
+}
 
+// GetEnvRequiredList splits a required comma-separated variable, dropping blank
+// entries. It panics when the variable is unset or holds no usable entry.
+func GetEnvRequiredList(key string) []string {
+	list := splitList(unprefixed.required(key))
 	if len(list) == 0 {
 		panic(fmt.Sprintf("Required environment variable %s has no entries", key))
+	}
+	return list
+}
+
+// GetEnvList splits a comma-separated variable, or returns a copy of
+// defaultValue so a caller cannot write through to the shared default.
+func GetEnvList(key string, defaultValue []string) []string {
+	list := splitList(GetEnv(key, ""))
+	if len(list) == 0 {
+		return append([]string(nil), defaultValue...)
 	}
 	return list
 }

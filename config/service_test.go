@@ -1,6 +1,7 @@
 package config
 
 import (
+	"net"
 	"testing"
 	"time"
 )
@@ -85,4 +86,58 @@ func TestNewServiceConfig_RejectsSubSecondRequestTimeout(t *testing.T) {
 			NewServiceConfig(8080)
 		})
 	}
+}
+
+// gin trusts every proxy by default, so an unset variable must still yield a
+// list that excludes public peers rather than an empty one.
+func TestNewServiceConfig_TrustedProxies(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
+	t.Setenv("TRUSTED_PROXIES", "")
+
+	cfg := NewServiceConfig(8080)
+
+	if len(cfg.TrustedProxies) != len(defaultTrustedProxies) {
+		t.Fatalf("TrustedProxies = %v, want the private-range default", cfg.TrustedProxies)
+	}
+	for _, cidr := range cfg.TrustedProxies {
+		if _, _, err := net.ParseCIDR(cidr); err != nil {
+			t.Errorf("default entry %q is not a CIDR: %v", cidr, err)
+		}
+	}
+}
+
+// A whitespace-only value would otherwise reach the CORS header verbatim.
+func TestNewServiceConfig_AllowedMethods(t *testing.T) {
+	tests := []struct {
+		name string
+		env  string
+		want string
+	}{
+		{"unset falls back", "", "GET,POST,PUT,PATCH,DELETE,OPTIONS"},
+		{"whitespace falls back", "  ", "GET,POST,PUT,PATCH,DELETE,OPTIONS"},
+		{"narrowed and normalised", "GET, POST ,OPTIONS,", "GET,POST,OPTIONS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ALLOWED_ORIGINS", "https://example.com")
+			t.Setenv("CORS_ALLOWED_METHODS", tt.env)
+
+			if got := NewServiceConfig(8080).AllowedMethods; got != tt.want {
+				t.Errorf("AllowedMethods = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewServiceConfig_RejectsNonCIDRTrustedProxy(t *testing.T) {
+	t.Setenv("ALLOWED_ORIGINS", "https://example.com")
+	t.Setenv("TRUSTED_PROXIES", "10.0.0.1")
+
+	defer func() {
+		if recover() == nil {
+			t.Error("a bare address should fail CIDR validation")
+		}
+	}()
+	NewServiceConfig(8080)
 }

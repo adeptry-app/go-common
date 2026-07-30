@@ -1,6 +1,7 @@
 # server
 
-HTTP server utilities with graceful shutdown.
+The router every service builds, and the HTTP server that runs it with graceful
+shutdown.
 
 ## Usage
 
@@ -11,13 +12,18 @@ import (
     "github.com/adeptry-app/go-common/server"
 )
 
-cfg := server.DefaultConfig("8080")
-if err := server.Run(router, cfg, logger); err != nil {
+router, err := server.NewRouter(cfg.ServiceConfig, appLogger, metricsCollector)
+if err != nil {
+    log.Fatal(err)
+}
+
+serverCfg := server.DefaultConfig("8080")
+if err := server.Run(router, serverCfg, appLogger); err != nil {
     log.Fatal(err)
 }
 
 // With cleanup function for resource cleanup
-server.RunWithCleanup(router, cfg, logger, func() {
+server.RunWithCleanup(router, serverCfg, appLogger, func() {
     db.Close()
     publisher.Close()
 })
@@ -37,6 +43,8 @@ cfg := server.Config{
 
 ## Features
 
+- `NewRouter` applies `ServiceConfig.TrustedProxies`, panic recovery, request
+  logging, metrics and CORS, and switches gin to release mode in production
 - Graceful shutdown on SIGINT/SIGTERM
 - Configurable timeouts with sensible defaults
 - Structured logging integration
