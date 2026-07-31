@@ -701,8 +701,8 @@ func TestRequireAuth(t *testing.T) {
 		if !ok {
 			t.Fatal("RequireAuth rejected an authenticated request")
 		}
-		if auth.UserID != 1 || auth.Username != "testuser" {
-			t.Errorf("auth = %+v, want UserID 1 / testuser", auth)
+		if auth.UserID() != 1 {
+			t.Errorf("auth = %+v, want UserID 1", auth)
 		}
 		c.Status(http.StatusOK)
 	})

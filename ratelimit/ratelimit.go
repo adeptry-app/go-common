@@ -50,7 +50,7 @@ func ByUser(client *goredis.Client, prefix string, max int64, window time.Durati
 		if !ok {
 			return "", false
 		}
-		return prefix + strconv.FormatInt(auth.UserID, 10), true
+		return prefix + strconv.FormatInt(auth.UserID(), 10), true
 	})
 }
 

@@ -61,10 +61,12 @@ runs `SELECT audit.set_context(...)` plus the function query in one pgx batch
 (one implicit transaction, one network round trip - see the `CallInto` doc
 comment for the semantics).
 
+The actor is typed and constructed, never assembled field by field: the
+database resolves the username from the id, so a caller cannot pair one with a
+name it does not own.
+
 ```go
-auth := database.AuthContext{
-    UserID: 42, Username: "user", ClientIP: ip, UserAgent: ua,
-}
+auth := database.UserActor(42, ip, ua) // AnonymousActor() for a route with no session
 
 row, err := database.CallJSON(ctx, pool, auth,
     "SELECT heroes.get_hero($1)", id)
@@ -87,5 +89,8 @@ other scan targets.
 - `WithStatementTimeout(d time.Duration) PgxPoolOption` - Cap one statement server
   side; pair with a matching handler deadline. Rides the startup packet, so it
   costs no round trip. Non-positive leaves the server default
+- `UserActor(userID, clientIP, userAgent) AuthContext` - Actor for an
+  authenticated request
+- `AnonymousActor() AuthContext` - Actor for a route served without a session
 - `CallJSON` / `CallBool` / `CallDiscard` / `CallInto` - Audited single-row
   SQL function calls (see above)

@@ -9,13 +9,47 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// AuthContext is the audit.set_context() payload: the session identity
-// applied before every audited SQL function call.
+// actorType names the kind of identity a call acts under, matching the
+// audit.actor_type enum.
+type actorType string
+
+const (
+	actorUser      actorType = "user"
+	actorAnonymous actorType = "anonymous"
+)
+
+// AuthContext is the audit.set_context() payload: the typed actor applied
+// before every audited SQL function call. The fields are unexported and the
+// constructors below are the only way in, so no caller can assemble an
+// identity by hand; the zero value names no actor and the database rejects it.
 type AuthContext struct {
-	UserID    int64
-	Username  string
-	ClientIP  string
-	UserAgent string
+	actor     actorType
+	userID    int64
+	clientIP  string
+	userAgent string
+}
+
+// UserActor attributes the call to an authenticated user. There is no username
+// argument: the database reads the name from the id, so the two cannot disagree.
+func UserActor(userID int64, clientIP, userAgent string) AuthContext {
+	return AuthContext{actor: actorUser, userID: userID, clientIP: clientIP, userAgent: userAgent}
+}
+
+// AnonymousActor attributes the call to nobody, for the routes served without a
+// session.
+func AnonymousActor() AuthContext {
+	return AuthContext{actor: actorAnonymous}
+}
+
+// UserID is 0 for any actor that is not a user.
+func (a AuthContext) UserID() int64 { return a.userID }
+
+// userIDArg stays NULL for a non-user actor, which set_context requires.
+func (a AuthContext) userIDArg() *int64 {
+	if a.actor != actorUser {
+		return nil
+	}
+	return &a.userID
 }
 
 // CallInto runs `SELECT audit.set_context(...)` and the given single-row
@@ -25,8 +59,8 @@ type AuthContext struct {
 // explicit BEGIN/COMMIT exchange in one network round trip.
 func CallInto(ctx context.Context, pool *pgxpool.Pool, auth AuthContext, dest any, query string, args ...any) error {
 	b := &pgx.Batch{}
-	b.Queue("SELECT audit.set_context($1, $2, $3, $4)",
-		auth.UserID, auth.Username, auth.ClientIP, auth.UserAgent)
+	b.Queue("SELECT audit.set_context($1::audit.actor_type, $2, $3, $4)",
+		string(auth.actor), auth.userIDArg(), auth.clientIP, auth.userAgent)
 	b.Queue(query, args...)
 
 	br := pool.SendBatch(ctx, b)

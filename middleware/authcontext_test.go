@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/adeptry-app/go-common/database"
 	"github.com/adeptry-app/go-common/jwt"
 )
 
@@ -32,14 +33,11 @@ func TestAuthContextFrom(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AuthContextFrom() error = %v", err)
 	}
-	if auth.UserID != 42 {
-		t.Errorf("UserID = %d, want 42", auth.UserID)
+	if auth.UserID() != 42 {
+		t.Errorf("UserID() = %d, want 42", auth.UserID())
 	}
-	if auth.Username != "kaladin" {
-		t.Errorf("Username = %q, want kaladin", auth.Username)
-	}
-	if auth.UserAgent != "curl/8.0" {
-		t.Errorf("UserAgent = %q, want curl/8.0", auth.UserAgent)
+	if want := database.UserActor(42, c.ClientIP(), "curl/8.0"); auth != want {
+		t.Errorf("actor = %+v, want %+v", auth, want)
 	}
 }
 

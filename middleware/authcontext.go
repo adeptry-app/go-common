@@ -33,12 +33,7 @@ func AuthContextFrom(c *gin.Context) (database.AuthContext, error) {
 		return database.AuthContext{}, ErrMissingAuthContext
 	}
 
-	auth := database.AuthContext{
-		UserID:    id.UserID,
-		Username:  id.Username,
-		ClientIP:  c.ClientIP(),
-		UserAgent: TruncateUserAgent(c.GetHeader("User-Agent")),
-	}
+	auth := database.UserActor(id.UserID, c.ClientIP(), TruncateUserAgent(c.GetHeader("User-Agent")))
 	c.Set(ctxKeyAuthContext, auth)
 	return auth, nil
 }

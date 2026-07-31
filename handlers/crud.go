@@ -104,7 +104,7 @@ func HandleGetByString(c *gin.Context, paramName string, fn RepoStringFunc) {
 }
 
 // GetByStringResponse: string path param → repo call → null check → JSON
-// response. Post-auth tail shared by authed and public (zero AuthContext) lookups.
+// response. Post-auth tail shared by authed and public (AnonymousActor) lookups.
 func GetByStringResponse(c *gin.Context, auth database.AuthContext, paramName string, fn RepoStringFunc) {
 	value := c.Param(paramName)
 	if value == "" {
