@@ -15,9 +15,9 @@ func testDatabaseConfig() config.DatabaseConfig {
 	return config.DatabaseConfig{
 		Host:     "localhost",
 		Port:     5432,
-		User:     "portfolio",
+		User:     "adeptry",
 		Password: "secret",
-		Name:     "portfolio",
+		Name:     "adeptry",
 		SSLMode:  "disable",
 	}
 }
@@ -42,11 +42,11 @@ func TestBuildPgxConfig_ConnectionFields(t *testing.T) {
 	if conn.Port != 5432 {
 		t.Errorf("Port = %d, want 5432", conn.Port)
 	}
-	if conn.Database != "portfolio" {
-		t.Errorf("Database = %q, want portfolio", conn.Database)
+	if conn.Database != "adeptry" {
+		t.Errorf("Database = %q, want adeptry", conn.Database)
 	}
-	if conn.User != "portfolio" {
-		t.Errorf("User = %q, want portfolio", conn.User)
+	if conn.User != "adeptry" {
+		t.Errorf("User = %q, want adeptry", conn.User)
 	}
 	if conn.Password != "p@ss:word/123" {
 		t.Errorf("Password = %q, special characters were not preserved", conn.Password)

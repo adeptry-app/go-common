@@ -12,8 +12,8 @@ import (
 )
 
 metricsCollector := metrics.New(metrics.Config{
-    ServiceName: "admin",
-    Namespace:   "portfolio",
+    ServiceName: "public-api",
+    Namespace:   "adeptry",
 })
 
 // HTTP metrics middleware
@@ -41,8 +41,8 @@ import (
 )
 
 queueMetrics := metrics.NewQueueMetrics(metrics.Config{
-    ServiceName: "worker",
-    Namespace:   "portfolio",
+    ServiceName: "ai-service",
+    Namespace:   "adeptry",
 })
 
 publisher, err := queue.NewRabbitMQPublisher(cfg, queue.WithPublisherMetrics(queueMetrics))
