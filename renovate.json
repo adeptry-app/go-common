@@ -6,7 +6,8 @@
     ":semanticCommits",
     ":separateMajorReleases",
     ":combinePatchMinorReleases",
-    ":label(go)"
+    ":label(go)",
+    "helpers:pinGitHubActionDigests"
   ],
   "timezone": "Europe/Riga",
   "schedule": ["every weekend"],

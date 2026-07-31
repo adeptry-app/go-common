@@ -25,7 +25,7 @@ type QueueMetrics struct {
 func NewQueueMetrics(cfg Config) *QueueMetrics {
 	namespace := cfg.Namespace
 	if namespace == "" {
-		namespace = "portfolio"
+		namespace = "adeptry"
 	}
 
 	return &QueueMetrics{

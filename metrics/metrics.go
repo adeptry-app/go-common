@@ -22,14 +22,14 @@ type Metrics struct {
 // Config holds metrics configuration
 type Config struct {
 	ServiceName string
-	Namespace   string // e.g., "portfolio"
+	Namespace   string // e.g., "adeptry"
 }
 
 // New creates a new Metrics instance with registered Prometheus metrics
 func New(cfg Config) *Metrics {
 	namespace := cfg.Namespace
 	if namespace == "" {
-		namespace = "portfolio"
+		namespace = "adeptry"
 	}
 
 	return &Metrics{
