@@ -26,6 +26,9 @@ const (
 // testAudience mirrors the services a browser access cookie reaches.
 var testAudience = []string{AudiencePublicAPI, AudienceFilesAPI}
 
+// testSession is the browser session the generated test tokens are bound to.
+var testSession = Session{ID: "0e2a1f2c-1c4f-4a3f-9a2b-6d1f0b7c8e55", AuthVersion: 3}
+
 func mustIssuer(t *testing.T, private, public string, accessExpiry, refreshExpiry time.Duration) Issuer {
 	t.Helper()
 
@@ -336,8 +339,8 @@ func TestGenerateToken_InputValidation(t *testing.T) {
 	}
 
 	generators := map[string]func(Identity) (string, error){
-		"access":  iss.GenerateAccessToken,
-		"refresh": iss.GenerateRefreshToken,
+		"access":  func(id Identity) (string, error) { return iss.GenerateAccessToken(id, testSession) },
+		"refresh": func(id Identity) (string, error) { return iss.GenerateRefreshToken(id, testSession) },
 		// AudienceAuth so the issuer's own verifier can round-trip the result.
 		"service": func(id Identity) (string, error) { return iss.GenerateServiceToken(id, AudienceAuth) },
 	}
@@ -410,7 +413,7 @@ func TestGenerateAccessToken_SpecialCharactersInUsername(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			scopes := map[string]string{"profile": "read"}
-			token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: tt.username, Scopes: scopes})
+			token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: tt.username, Scopes: scopes}, testSession)
 			if err != nil {
 				t.Fatalf("GenerateAccessToken() error = %v", err)
 			}
@@ -434,7 +437,7 @@ func TestGenerateAccessToken_TokensAreDifferent(t *testing.T) {
 
 	scopes := map[string]string{"profile": "read"}
 	// Generate multiple tokens for same user
-	token1, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token1, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -442,7 +445,7 @@ func TestGenerateAccessToken_TokensAreDifferent(t *testing.T) {
 	// Sleep to ensure different IssuedAt timestamp (JWT timestamps are in seconds)
 	time.Sleep(1001 * time.Millisecond)
 
-	token2, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token2, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -478,7 +481,7 @@ func TestGenerateAccessToken_ClaimsStructure(t *testing.T) {
 	scopes := map[string]string{"profile": "read", "projects": "edit"}
 	beforeGeneration := time.Now()
 
-	token, err := iss.GenerateAccessToken(Identity{UserID: userID, Username: username, Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: userID, Username: username, Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -528,7 +531,7 @@ func TestGenerateAccessToken_SigningMethodAndKeyID(t *testing.T) {
 	private, public := jwttest.KeyPair(t, testKeyID)
 	iss := mustIssuer(t, private, public, testAccessExpiry, testRefreshExpiry)
 
-	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -572,8 +575,8 @@ func TestGenerateToken_WithScopes(t *testing.T) {
 	}
 
 	generators := map[string]func(Identity) (string, error){
-		"access":  iss.GenerateAccessToken,
-		"refresh": iss.GenerateRefreshToken,
+		"access":  func(id Identity) (string, error) { return iss.GenerateAccessToken(id, testSession) },
+		"refresh": func(id Identity) (string, error) { return iss.GenerateRefreshToken(id, testSession) },
 	}
 	validators := map[string]func(string) (*Claims, error){
 		"access":  iss.ValidateAccessToken,
@@ -627,7 +630,7 @@ func checkScopes(t *testing.T, want, got map[string]string) {
 func TestAccessTokenAudience(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
-	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -701,7 +704,7 @@ func TestGenerateAccessToken_UsesConfiguredAudience(t *testing.T) {
 		t.Fatalf("NewIssuer() error = %v", err)
 	}
 
-	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -718,7 +721,7 @@ func TestGenerateAccessToken_UsesConfiguredAudience(t *testing.T) {
 func TestRefreshTokenAudienceIsAuthOnly(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
-	token, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser"})
+	token, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser"}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -749,7 +752,7 @@ func TestVerifierRejectsForeignAudience(t *testing.T) {
 func TestVerifierRejectsBrowserTokenAtMessaging(t *testing.T) {
 	iss, messaging := newTestPair(t, AudienceMessaging)
 
-	access, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
+	access, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -762,7 +765,7 @@ func TestVerifierRejectsBrowserTokenAtMessaging(t *testing.T) {
 func TestVerifierRejectsRefreshTokenAtOtherServices(t *testing.T) {
 	iss, filesAPI := newTestPair(t, AudienceFilesAPI)
 
-	refresh, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser"})
+	refresh, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser"}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -802,6 +805,66 @@ func TestGenerateServiceToken_InputValidation(t *testing.T) {
 	}
 	if _, err := iss.GenerateServiceToken(Identity{Username: "auth-service"}, AudienceMessaging); !errors.Is(err, ErrInvalidUserID) {
 		t.Error("GenerateServiceToken() should reject a non-positive user id")
+	}
+}
+
+func TestGenerateToken_SessionClaimsRoundTrip(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
+	id := Identity{UserID: 1, Username: "testuser"}
+
+	access, err := iss.GenerateAccessToken(id, testSession)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+	refresh, err := iss.GenerateRefreshToken(id, testSession)
+	if err != nil {
+		t.Fatalf("GenerateRefreshToken() error = %v", err)
+	}
+
+	tokens := map[string]string{"access": access, "refresh": refresh}
+	validators := map[string]func(string) (*Claims, error){
+		"access":  iss.ValidateAccessToken,
+		"refresh": iss.ValidateRefreshToken,
+	}
+	for kind, token := range tokens {
+		t.Run(kind, func(t *testing.T) {
+			claims, err := validators[kind](token)
+			if err != nil {
+				t.Fatalf("validate() error = %v", err)
+			}
+			if claims.Session() != testSession {
+				t.Errorf("Claims.Session() = %+v, want %+v", claims.Session(), testSession)
+			}
+		})
+	}
+}
+
+func TestGenerateToken_SessionIsRequiredForBrowserTokens(t *testing.T) {
+	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
+	id := Identity{UserID: 1, Username: "testuser"}
+
+	if _, err := iss.GenerateAccessToken(id, Session{AuthVersion: 1}); !errors.Is(err, ErrEmptySessionID) {
+		t.Errorf("GenerateAccessToken() error = %v, want %v", err, ErrEmptySessionID)
+	}
+	if _, err := iss.GenerateRefreshToken(id, Session{AuthVersion: 1}); !errors.Is(err, ErrEmptySessionID) {
+		t.Errorf("GenerateRefreshToken() error = %v, want %v", err, ErrEmptySessionID)
+	}
+}
+
+func TestGenerateServiceToken_CarriesNoSession(t *testing.T) {
+	iss, messaging := newTestPair(t, AudienceMessaging)
+
+	token, err := iss.GenerateServiceToken(Identity{UserID: 1, Username: "auth-service"}, AudienceMessaging)
+	if err != nil {
+		t.Fatalf("GenerateServiceToken() error = %v", err)
+	}
+
+	claims, err := messaging.ValidateAccessToken(token)
+	if err != nil {
+		t.Fatalf("ValidateAccessToken() error = %v", err)
+	}
+	if claims.Session() != (Session{}) {
+		t.Errorf("service token session = %+v, want none", claims.Session())
 	}
 }
 
@@ -850,7 +913,7 @@ func TestKeyRotation_VerifierAcceptsBothKeys(t *testing.T) {
 
 	id := Identity{UserID: 1, Username: "testuser"}
 	for name, iss := range map[string]Issuer{"old": oldIssuer, "new": newIssuer} {
-		token, err := iss.GenerateAccessToken(id)
+		token, err := iss.GenerateAccessToken(id, testSession)
 		if err != nil {
 			t.Fatalf("GenerateAccessToken(%s) error = %v", name, err)
 		}
@@ -861,7 +924,7 @@ func TestKeyRotation_VerifierAcceptsBothKeys(t *testing.T) {
 
 	// Retiring the old key must invalidate tokens it signed.
 	retired := mustVerifier(t, newPublic, AudiencePublicAPI)
-	oldToken, err := oldIssuer.GenerateAccessToken(id)
+	oldToken, err := oldIssuer.GenerateAccessToken(id, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken(old) error = %v", err)
 	}
@@ -878,7 +941,7 @@ func TestGenerateToken_ScopesDefensiveCopy(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	originalScopes := map[string]string{"profile": "read", "projects": "edit"}
-	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: originalScopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: originalScopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -916,7 +979,7 @@ func TestValidateAccessToken_ValidToken(t *testing.T) {
 	username := "testuser"
 	scopes := map[string]string{"profile": "read"}
 
-	token, err := iss.GenerateAccessToken(Identity{UserID: userID, Username: username, Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: userID, Username: username, Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -940,7 +1003,7 @@ func TestValidateAccessToken_ExpiredToken(t *testing.T) {
 	iss := newTestIssuer(t, 1*time.Millisecond, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -959,7 +1022,7 @@ func TestValidateAccessToken_InvalidSignature(t *testing.T) {
 
 	scopes := map[string]string{"profile": "read"}
 	// Generate token with iss1
-	token, err := iss1.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss1.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -1012,7 +1075,7 @@ func TestValidateAccessToken_TamperedToken(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -1081,7 +1144,7 @@ func TestValidateAccessToken_UnknownKeyID(t *testing.T) {
 	_, trustedPublic := jwttest.KeyPair(t, "trusted")
 
 	signer := mustIssuer(t, signingPrivate, signingPublic, testAccessExpiry, testRefreshExpiry)
-	token, err := signer.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"})
+	token, err := signer.GenerateAccessToken(Identity{UserID: 1, Username: "testuser"}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -1125,7 +1188,7 @@ func TestValidateAccessToken_InvalidClaimsStructure(t *testing.T) {
 
 	scopes := map[string]string{"profile": "read"}
 	// Generate a valid token
-	validToken, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	validToken, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -1153,7 +1216,7 @@ func TestValidateAccessToken_ExpiryBoundary(t *testing.T) {
 	iss := newTestIssuer(t, 3*time.Second, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -1210,7 +1273,7 @@ func TestRefreshTokenExpiry(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -1231,7 +1294,7 @@ func TestRefreshTokenExpiry(t *testing.T) {
 	}
 
 	// Refresh token should expire much later than access token
-	accessToken, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	accessToken, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -1251,7 +1314,7 @@ func TestVeryLongExpiry(t *testing.T) {
 	iss := newTestIssuer(t, longExpiry, testRefreshExpiry)
 
 	scopes := map[string]string{"profile": "read"}
-	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -1276,7 +1339,7 @@ func TestVeryLongExpiry(t *testing.T) {
 func TestGenerateToken_TokenType(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 
-	access, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: nil})
+	access, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: nil}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -1288,7 +1351,7 @@ func TestGenerateToken_TokenType(t *testing.T) {
 		t.Errorf("access TokenType = %q, want %q", accessClaims.TokenType, TokenTypeAccess)
 	}
 
-	refresh, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser", Scopes: nil})
+	refresh, err := iss.GenerateRefreshToken(Identity{UserID: 1, Username: "testuser", Scopes: nil}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -1305,11 +1368,11 @@ func TestValidateTyped_RejectsTheOtherTokenType(t *testing.T) {
 	iss := newTestIssuer(t, testAccessExpiry, testRefreshExpiry)
 	id := Identity{UserID: 1, Username: "testuser", Scopes: nil}
 
-	access, err := iss.GenerateAccessToken(id)
+	access, err := iss.GenerateAccessToken(id, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
-	refresh, err := iss.GenerateRefreshToken(id)
+	refresh, err := iss.GenerateRefreshToken(id, testSession)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -1341,7 +1404,7 @@ func TestGenerateAccessToken_ProfileClaims(t *testing.T) {
 		EmailVerified: true,
 		DisplayName:   "Kaladin Stormblessed",
 		Scopes:        map[string]string{"heroes": "edit"},
-	})
+	}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
@@ -1418,7 +1481,7 @@ func TestConcurrentTokenGeneration(t *testing.T) {
 	for i := range concurrency {
 		go func(userID int64) {
 			scopes := map[string]string{"profile": "read"}
-			token, err := iss.GenerateAccessToken(Identity{UserID: userID, Username: "testuser", Scopes: scopes})
+			token, err := iss.GenerateAccessToken(Identity{UserID: userID, Username: "testuser", Scopes: scopes}, testSession)
 			if err != nil {
 				t.Errorf("GenerateAccessToken() error = %v", err)
 			}
@@ -1467,7 +1530,7 @@ func TestConcurrentTokenValidation(t *testing.T) {
 
 	scopes := map[string]string{"profile": "read"}
 	// Generate a single token
-	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes})
+	token, err := iss.GenerateAccessToken(Identity{UserID: 1, Username: "testuser", Scopes: scopes}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}

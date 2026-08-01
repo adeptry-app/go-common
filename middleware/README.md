@@ -51,6 +51,35 @@ only way in and out. Tests that need an authenticated request call
 `middleware.SetIdentity(c, jwt.Identity{UserID: 1, Scopes: ...})` rather than
 setting a key by hand.
 
+### Session Validation
+
+Signature and expiry checks alone cannot revoke: a copied access token keeps
+working after logout or password recovery until it expires. Pass a
+`SessionValidator` to check each browser token against live session state. The
+`session` package implements it against the shared Redis client:
+
+```go
+authMiddleware := middleware.NewAuthMiddleware(verifier,
+    middleware.WithSessionValidator(session.NewStore(redisClient)))
+```
+
+Any type with this method works, but use the shared store rather than a local
+one - the Redis key layout is owned by `session`, not by each service:
+
+```go
+func (s *sessions) ValidateSession(
+    ctx context.Context, userID int64, session jwt.Session,
+) error {
+    // ...
+    return middleware.ErrSessionRevoked // session gone or authv moved on
+}
+```
+
+`ErrSessionRevoked` answers 401; any other error answers 503, because failing
+open would make every revocation advisory. Tokens with no `sid` - service tokens
+and tokens minted before session binding - skip the validator entirely. Without
+the option, validation stays local and nothing revokes before expiry.
+
 ## SecurityMiddleware
 
 CORS validation and security headers:

@@ -32,6 +32,26 @@ const (
 	ActionFileDelete          = "file_delete"
 )
 
+// Credential and identity lifecycle events. Each one changes what a credential
+// proves, so support can tell recovery apart from takeover after the fact.
+// Metadata carries the reason and never the credential itself.
+const (
+	ActionPasswordChangeSuccess = "password_change_success"
+	ActionPasswordChangeFailure = "password_change_failure"
+	ActionPasswordSetSuccess    = "password_set_success"
+	ActionPasswordSetFailure    = "password_set_failure"
+	ActionPasswordResetRequest  = "password_reset_request"
+	ActionPasswordResetSuccess  = "password_reset_success"
+	ActionPasswordResetFailure  = "password_reset_failure"
+	ActionEmailChangeRequest    = "email_change_request"
+	ActionEmailChangeFailure    = "email_change_failure"
+	ActionEmailVerifySuccess    = "email_verify_success"
+	ActionEmailVerifyFailure    = "email_verify_failure"
+	ActionOAuthLink             = "oauth_link"
+	ActionOAuthUnlink           = "oauth_unlink"
+	ActionSessionsRevoked       = "sessions_revoked"
+)
+
 // Resource types
 const (
 	ResourceTypeFile = "file"

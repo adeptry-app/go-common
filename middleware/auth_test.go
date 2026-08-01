@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,6 +12,9 @@ import (
 	"github.com/adeptry-app/go-common/jwt/jwttest"
 	"github.com/gin-gonic/gin"
 )
+
+// testSession is the browser session the generated test tokens are bound to.
+var testSession = jwt.Session{ID: "62f0d0f7-6a2a-4a3a-9f3e-2f0f8b1d4c77", AuthVersion: 2}
 
 func newIdentityTestContext() *gin.Context {
 	gin.SetMode(gin.TestMode)
@@ -72,7 +77,10 @@ func TestGetIdentity_NotAuthenticated(t *testing.T) {
 	}
 }
 
-func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
+// newTestPair returns an issuer and a verifier for the public-api audience.
+func newTestPair(t *testing.T) (jwt.Issuer, jwt.Verifier) {
+	t.Helper()
+
 	private, public := jwttest.KeyPair(t, "test1")
 	issuer, err := jwt.NewIssuer(jwt.IssuerConfig{
 		PrivateKey:     private,
@@ -88,12 +96,17 @@ func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewVerifier() error = %v", err)
 	}
+	return issuer, verifier
+}
 
-	access, err := issuer.GenerateAccessToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil})
+func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
+	issuer, verifier := newTestPair(t)
+
+	access, err := issuer.GenerateAccessToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateAccessToken() error = %v", err)
 	}
-	refresh, err := issuer.GenerateRefreshToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil})
+	refresh, err := issuer.GenerateRefreshToken(jwt.Identity{UserID: 42, Username: "kaladin", Scopes: nil}, testSession)
 	if err != nil {
 		t.Fatalf("GenerateRefreshToken() error = %v", err)
 	}
@@ -107,6 +120,7 @@ func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
 		token      string
 		wantStatus int
 	}{
+		// No validator wired, so a session-bound token passes on local checks alone.
 		{"access token", access, http.StatusOK},
 		{"refresh token", refresh, http.StatusUnauthorized},
 		{"token for another service", foreign, http.StatusUnauthorized},
@@ -126,6 +140,80 @@ func TestValidateToken_RejectsNonAccessTokens(t *testing.T) {
 
 			if w.Code != tt.wantStatus {
 				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+		})
+	}
+}
+
+// recordingValidator captures what the middleware asked about and answers with
+// a fixed verdict.
+type recordingValidator struct {
+	err     error
+	calls   int
+	userID  int64
+	session jwt.Session
+}
+
+func (r *recordingValidator) ValidateSession(_ context.Context, userID int64, session jwt.Session) error {
+	r.calls++
+	r.userID = userID
+	r.session = session
+	return r.err
+}
+
+func TestValidateToken_SessionValidation(t *testing.T) {
+	issuer, verifier := newTestPair(t)
+
+	identity := jwt.Identity{UserID: 42, Username: "kaladin"}
+	bound, err := issuer.GenerateAccessToken(identity, testSession)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+	// A service token carries no session, so S2S calls outlive a user logout.
+	unbound, err := issuer.GenerateServiceToken(identity, jwt.AudiencePublicAPI)
+	if err != nil {
+		t.Fatalf("GenerateServiceToken() error = %v", err)
+	}
+
+	tests := []struct {
+		name       string
+		token      string
+		err        error
+		wantStatus int
+		wantCalls  int
+	}{
+		{"live session", bound, nil, http.StatusOK, 1},
+		{"revoked session", bound, ErrSessionRevoked, http.StatusUnauthorized, 1},
+		{"validator unreachable", bound, errors.New("redis down"), http.StatusServiceUnavailable, 1},
+		{"token without a session", unbound, ErrSessionRevoked, http.StatusOK, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			validator := &recordingValidator{err: tt.err}
+			router := gin.New()
+			router.Use(NewAuthMiddleware(verifier, WithSessionValidator(validator)).ValidateToken())
+			router.GET("/heroes", func(c *gin.Context) { c.Status(http.StatusOK) })
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/heroes", nil)
+			req.Header.Set("Authorization", "Bearer "+tt.token)
+			router.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+			if validator.calls != tt.wantCalls {
+				t.Errorf("validator calls = %d, want %d", validator.calls, tt.wantCalls)
+			}
+			if tt.wantCalls > 0 {
+				if validator.userID != identity.UserID {
+					t.Errorf("validated user = %d, want %d", validator.userID, identity.UserID)
+				}
+				if validator.session != testSession {
+					t.Errorf("validated session = %+v, want %+v", validator.session, testSession)
+				}
 			}
 		})
 	}

@@ -53,6 +53,7 @@ var (
 	ErrMalformedKey   = errors.New(`key must be formatted as "<kid>:<base64 DER>"`)
 	ErrNoPublicKeys   = errors.New("no public keys configured")
 	ErrInvalidExpiry  = errors.New("token expiry must be positive")
+	ErrEmptySessionID = errors.New("session ID cannot be empty")
 )
 
 // Identity is the user a token is issued for. Its fields are inlined into the
@@ -66,11 +67,30 @@ type Identity struct {
 	Scopes        map[string]string `json:"scopes,omitempty"`
 }
 
+// Session binds a browser token to server-side state a logout can destroy.
+// Service tokens carry none, so revoking a browser session leaves S2S calls up.
+type Session struct {
+	// ID is the server-side session the token was minted for.
+	ID string
+	// AuthVersion is the user's authorization version at issue time; bumping it
+	// invalidates every token minted before the bump.
+	AuthVersion int64
+}
+
 // Claims represents JWT token claims with user information.
 type Claims struct {
 	Identity
 	TokenType string `json:"token_type"`
+	// Both are absent on service tokens and on browser tokens minted before
+	// session binding; those stay valid until they expire.
+	SessionID   string `json:"sid,omitempty"`
+	AuthVersion int64  `json:"authv,omitempty"`
 	jwt.RegisteredClaims
+}
+
+// Session returns the session this token is bound to, zero when unbound.
+func (c *Claims) Session() Session {
+	return Session{ID: c.SessionID, AuthVersion: c.AuthVersion}
 }
 
 // Verifier checks tokens minted by the auth service; it holds public keys only.
@@ -85,8 +105,8 @@ type Verifier interface {
 // one; everywhere else the Verifier interface makes minting a compile error.
 type Issuer interface {
 	Verifier
-	GenerateAccessToken(id Identity) (string, error)
-	GenerateRefreshToken(id Identity) (string, error)
+	GenerateAccessToken(id Identity, session Session) (string, error)
+	GenerateRefreshToken(id Identity, session Session) (string, error)
 	GenerateServiceToken(id Identity, audience string) (string, error)
 	GetAccessExpiry() time.Duration
 	GetRefreshExpiry() time.Duration
@@ -256,27 +276,35 @@ func (v *verifier) keyFor(token *jwt.Token) (any, error) {
 }
 
 // GenerateAccessToken creates a short-lived access token addressed to every
-// service the browser presents the cookie to.
-func (i *issuer) GenerateAccessToken(id Identity) (string, error) {
-	return i.generateToken(id, i.accessAudience, i.accessExpiry, TokenTypeAccess)
+// service the browser presents the cookie to. It is bound to a session so a
+// logout can revoke it before it expires.
+func (i *issuer) GenerateAccessToken(id Identity, session Session) (string, error) {
+	if session.ID == "" {
+		return "", ErrEmptySessionID
+	}
+	return i.generateToken(id, session, i.accessAudience, i.accessExpiry, TokenTypeAccess)
 }
 
 // GenerateRefreshToken creates a long-lived refresh token usable only at the
 // auth service.
-func (i *issuer) GenerateRefreshToken(id Identity) (string, error) {
-	return i.generateToken(id, []string{AudienceAuth}, i.refreshExpiry, TokenTypeRefresh)
+func (i *issuer) GenerateRefreshToken(id Identity, session Session) (string, error) {
+	if session.ID == "" {
+		return "", ErrEmptySessionID
+	}
+	return i.generateToken(id, session, []string{AudienceAuth}, i.refreshExpiry, TokenTypeRefresh)
 }
 
 // GenerateServiceToken creates an access token for one service-to-service call.
-// The single audience keeps it from being replayed against another service.
+// The single audience keeps it from being replayed against another service, and
+// carrying no session keeps it alive across the caller's logouts.
 func (i *issuer) GenerateServiceToken(id Identity, audience string) (string, error) {
 	if audience == "" {
 		return "", ErrEmptyAudience
 	}
-	return i.generateToken(id, []string{audience}, i.accessExpiry, TokenTypeAccess)
+	return i.generateToken(id, Session{}, []string{audience}, i.accessExpiry, TokenTypeAccess)
 }
 
-func (i *issuer) generateToken(id Identity, audience []string, expiry time.Duration, tokenType string) (string, error) {
+func (i *issuer) generateToken(id Identity, session Session, audience []string, expiry time.Duration, tokenType string) (string, error) {
 	if id.UserID <= 0 {
 		return "", ErrInvalidUserID
 	}
@@ -289,8 +317,10 @@ func (i *issuer) generateToken(id Identity, audience []string, expiry time.Durat
 
 	now := time.Now()
 	claims := Claims{
-		Identity:  id,
-		TokenType: tokenType,
+		Identity:    id,
+		TokenType:   tokenType,
+		SessionID:   session.ID,
+		AuthVersion: session.AuthVersion,
 		RegisteredClaims: jwt.RegisteredClaims{
 			Issuer:    IssuerName,
 			Audience:  audience,
