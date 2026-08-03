@@ -48,13 +48,9 @@ func abortUnauthorized(c *gin.Context, reason string) {
 	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - " + reason})
 }
 
-// ErrSessionRevoked marks a session that is gone or superseded, as opposed to
-// one the validator could not reach. Only the former is the caller's problem.
-var ErrSessionRevoked = errors.New("session revoked")
-
 // SessionValidator answers whether the session a browser token was minted for is
 // still live. Implementations read Redis or a bounded revocation cache, and
-// return ErrSessionRevoked when the session is dead or the version has moved on.
+// return jwt.ErrSessionRevoked when the session is dead or the version has moved on.
 type SessionValidator interface {
 	ValidateSession(ctx context.Context, userID int64, session jwt.Session) error
 }
@@ -133,7 +129,7 @@ func (m *AuthMiddleware) ValidateToken() gin.HandlerFunc {
 		}
 
 		if err := m.checkSession(c, claims); err != nil {
-			if errors.Is(err, ErrSessionRevoked) {
+			if errors.Is(err, jwt.ErrSessionRevoked) {
 				abortUnauthorized(c, "session revoked")
 				return
 			}

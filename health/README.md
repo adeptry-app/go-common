@@ -87,7 +87,9 @@ that never returns is reported `unhealthy` with `check did not complete within
 <timeout>` and its late result is discarded, so one wedged dependency cannot
 hold the probe open. The last 50ms of the window (half of it, under a 100ms
 timeout) is reserved for checkers that honour cancellation to report their own
-reason, so the whole run still fits inside the timeout you configured.
+reason, so the whole run still fits inside the timeout you configured. A run cut
+short by the caller's own context reports `check cancelled` instead, so a client
+that hung up is not read back as a slow dependency.
 
 ## Custom Checkers
 

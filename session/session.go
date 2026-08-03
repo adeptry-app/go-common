@@ -13,7 +13,6 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/adeptry-app/go-common/jwt"
-	"github.com/adeptry-app/go-common/middleware"
 )
 
 // Key patterns for the two pieces of state a validator reads.
@@ -53,14 +52,16 @@ func AuthVersion(ctx context.Context, client goredis.Cmdable, userID int64) (int
 func BumpAuthVersion(ctx context.Context, client goredis.Cmdable, userID int64, ttl time.Duration) (int64, error) {
 	key := AuthVersionKey(userID)
 
-	version, err := client.Incr(ctx, key).Result()
-	if err != nil {
+	// One transaction, so a failed expiry cannot leave the key without a TTL.
+	var incr *goredis.IntCmd
+	if _, err := client.TxPipelined(ctx, func(pipe goredis.Pipeliner) error {
+		incr = pipe.Incr(ctx, key)
+		pipe.Expire(ctx, key, ttl)
+		return nil
+	}); err != nil {
 		return 0, fmt.Errorf("bump auth version: %w", err)
 	}
-	if err := client.Expire(ctx, key, ttl).Err(); err != nil {
-		return 0, fmt.Errorf("bump auth version: %w", err)
-	}
-	return version, nil
+	return incr.Val(), nil
 }
 
 // Store answers middleware.SessionValidator from Redis.
@@ -90,7 +91,7 @@ func (s *Store) ValidateSession(ctx context.Context, userID int64, session jwt.S
 	}
 
 	if live.Val() == 0 {
-		return middleware.ErrSessionRevoked
+		return jwt.ErrSessionRevoked
 	}
 
 	version, err := current.Int64()
@@ -101,7 +102,7 @@ func (s *Store) ValidateSession(ctx context.Context, userID int64, session jwt.S
 		return fmt.Errorf("read auth version: %w", err)
 	}
 	if session.AuthVersion < version {
-		return middleware.ErrSessionRevoked
+		return jwt.ErrSessionRevoked
 	}
 	return nil
 }

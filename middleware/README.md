@@ -71,11 +71,11 @@ func (s *sessions) ValidateSession(
     ctx context.Context, userID int64, session jwt.Session,
 ) error {
     // ...
-    return middleware.ErrSessionRevoked // session gone or authv moved on
+    return jwt.ErrSessionRevoked // session gone or authv moved on
 }
 ```
 
-`ErrSessionRevoked` answers 401; any other error answers 503, because failing
+`jwt.ErrSessionRevoked` answers 401; any other error answers 503, because failing
 open would make every revocation advisory. Tokens with no `sid` - service tokens
 and tokens minted before session binding - skip the validator entirely. Without
 the option, validation stays local and nothing revokes before expiry.

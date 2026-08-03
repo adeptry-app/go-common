@@ -163,7 +163,9 @@ func (a *Aggregator) Check(ctx context.Context) Health {
 			health.record(pending[r.index], r.result)
 			delete(pending, r.index)
 		case <-checkCtx.Done():
-			a.expire(&health, pending, results, start, grace)
+			// Read the caller's state now: a disconnect during the grace window
+			// must not be mistaken for the reason the checks were cut short.
+			a.expire(&health, pending, results, start, grace, ctx.Err())
 			return health
 		}
 	}
@@ -181,8 +183,9 @@ func (a *Aggregator) grace() time.Duration {
 }
 
 // expire records whatever the cancelled checkers still report within the grace
-// window, then fails every check that never reported at all.
-func (a *Aggregator) expire(health *Health, pending map[int]string, results <-chan checkOutcome, start time.Time, grace time.Duration) {
+// window, then fails every check that never reported at all. callerErr is the
+// caller's context error when it, rather than the timeout, ended the run.
+func (a *Aggregator) expire(health *Health, pending map[int]string, results <-chan checkOutcome, start time.Time, grace time.Duration, callerErr error) {
 	window := time.NewTimer(grace)
 	defer window.Stop()
 
@@ -192,8 +195,12 @@ func (a *Aggregator) expire(health *Health, pending map[int]string, results <-ch
 			health.record(pending[r.index], r.result)
 			delete(pending, r.index)
 		case <-window.C:
+			expired := Unhealthy(start, "check did not complete within %s", a.timeout)
+			if callerErr != nil {
+				expired = Unhealthy(start, "check cancelled: %v", callerErr)
+			}
 			for _, name := range pending {
-				health.record(name, Unhealthy(start, "check did not complete within %s", a.timeout))
+				health.record(name, expired)
 			}
 			return
 		}

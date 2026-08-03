@@ -10,7 +10,6 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 
 	"github.com/adeptry-app/go-common/jwt"
-	"github.com/adeptry-app/go-common/middleware"
 )
 
 const testSessionID = "0e2a1f2c-1c4f-4a3f-9a2b-6d1f0b7c8e55"
@@ -47,7 +46,7 @@ func TestValidateSession(t *testing.T) {
 			name:    "session destroyed by logout",
 			seed:    func(*testing.T, *miniredis.Miniredis) {},
 			token:   jwt.Session{ID: testSessionID},
-			wantErr: middleware.ErrSessionRevoked,
+			wantErr: jwt.ErrSessionRevoked,
 		},
 		{
 			name: "another user's live session",
@@ -55,7 +54,7 @@ func TestValidateSession(t *testing.T) {
 			token: jwt.Session{
 				ID: testSessionID,
 			},
-			wantErr: middleware.ErrSessionRevoked,
+			wantErr: jwt.ErrSessionRevoked,
 		},
 		{
 			name: "token stamped at the current version",
@@ -76,7 +75,7 @@ func TestValidateSession(t *testing.T) {
 				}
 			},
 			token:   jwt.Session{ID: testSessionID, AuthVersion: 2},
-			wantErr: middleware.ErrSessionRevoked,
+			wantErr: jwt.ErrSessionRevoked,
 		},
 	}
 
@@ -101,7 +100,7 @@ func TestValidateSession_UnreachableRedisIsNotRevocation(t *testing.T) {
 		t.Fatal("ValidateSession() error = nil, want a transport error")
 	}
 	// The middleware answers 503 for this and 401 only for a real revocation.
-	if errors.Is(err, middleware.ErrSessionRevoked) {
+	if errors.Is(err, jwt.ErrSessionRevoked) {
 		t.Errorf("ValidateSession() error = %v, want it distinguishable from revocation", err)
 	}
 }
@@ -141,6 +140,20 @@ func TestBumpAuthVersion_CountsUpAndExpires(t *testing.T) {
 	}
 	if version != 3 {
 		t.Errorf("AuthVersion() = %d, want 3", version)
+	}
+}
+
+func TestBumpAuthVersion_FailureLeavesNoKeyWithoutTTL(t *testing.T) {
+	store, mr := newTestStore(t)
+	mr.SetError("bump failed")
+
+	if _, err := BumpAuthVersion(context.Background(), store.client, 42, time.Hour); err == nil {
+		t.Fatal("BumpAuthVersion() error = nil, want the redis failure")
+	}
+
+	mr.SetError("")
+	if mr.Exists(AuthVersionKey(42)) {
+		t.Errorf("key %s survived a failed bump, so its TTL was never set", AuthVersionKey(42))
 	}
 }
 

@@ -183,9 +183,9 @@ func TestValidateToken_SessionValidation(t *testing.T) {
 		wantCalls  int
 	}{
 		{"live session", bound, nil, http.StatusOK, 1},
-		{"revoked session", bound, ErrSessionRevoked, http.StatusUnauthorized, 1},
+		{"revoked session", bound, jwt.ErrSessionRevoked, http.StatusUnauthorized, 1},
 		{"validator unreachable", bound, errors.New("redis down"), http.StatusServiceUnavailable, 1},
-		{"token without a session", unbound, ErrSessionRevoked, http.StatusOK, 0},
+		{"token without a session", unbound, jwt.ErrSessionRevoked, http.StatusOK, 0},
 	}
 
 	for _, tt := range tests {

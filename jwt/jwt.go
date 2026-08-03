@@ -54,6 +54,9 @@ var (
 	ErrNoPublicKeys   = errors.New("no public keys configured")
 	ErrInvalidExpiry  = errors.New("token expiry must be positive")
 	ErrEmptySessionID = errors.New("session ID cannot be empty")
+	// ErrSessionRevoked marks a session that is gone or superseded, as opposed to
+	// one the validator could not reach. Only the former is the caller's problem.
+	ErrSessionRevoked = errors.New("session revoked")
 )
 
 // Identity is the user a token is issued for. Its fields are inlined into the

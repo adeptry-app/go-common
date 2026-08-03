@@ -218,6 +218,23 @@ func TestAggregator_Check_UncooperativeCheckerCannotBlockForever(t *testing.T) {
 	}
 }
 
+func TestAggregator_Check_CallerCancellationIsNotReportedAsATimeout(t *testing.T) {
+	blocked := &blockedChecker{name: "stuck", release: make(chan struct{})}
+	defer close(blocked.release)
+
+	agg := NewAggregator(10 * time.Second)
+	agg.Register(blocked)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	health := agg.Check(ctx)
+
+	if got := health.Checks["stuck"].Error; got != "check cancelled: context canceled" {
+		t.Errorf("stuck error = %q, want the caller's cancellation, not the 10s deadline", got)
+	}
+}
+
 func TestAggregator_Grace_FitsInsideTheConfiguredTimeout(t *testing.T) {
 	tests := []struct {
 		timeout time.Duration
