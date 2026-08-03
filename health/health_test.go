@@ -255,10 +255,12 @@ func TestAggregator_Check_HangUpDuringGraceKeepsTheTimeoutReason(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Hang up once the check deadline has passed, so the cancellation lands in
-	// the grace window rather than wherever a sleep happens to put it.
+	// Hang up inside the grace window. The checker's deadline anchors the wait,
+	// and the margin clears the aggregator's own wake-up on that same deadline -
+	// cancelling on the signal alone races it, and under -race loses.
 	go func() {
 		<-blocked.expired
+		time.Sleep(20 * time.Millisecond)
 		cancel()
 	}()
 
