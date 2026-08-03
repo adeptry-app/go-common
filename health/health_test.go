@@ -179,15 +179,22 @@ func TestAggregator_Check_Timeout(t *testing.T) {
 }
 
 // blockedChecker ignores cancellation, standing in for a dependency call that
-// never returns until the test releases it.
+// never returns until the test releases it. When expired is set it waits for
+// the check deadline first and closes it, so a test can act on that moment
+// rather than guess at it.
 type blockedChecker struct {
 	name    string
 	release chan struct{}
+	expired chan struct{}
 }
 
 func (b *blockedChecker) Name() string { return b.name }
 
-func (b *blockedChecker) Check(context.Context) CheckResult {
+func (b *blockedChecker) Check(ctx context.Context) CheckResult {
+	if b.expired != nil {
+		<-ctx.Done()
+		close(b.expired)
+	}
 	<-b.release
 	return CheckResult{Status: StatusHealthy}
 }
@@ -236,7 +243,11 @@ func TestAggregator_Check_CallerCancellationIsNotReportedAsATimeout(t *testing.T
 }
 
 func TestAggregator_Check_HangUpDuringGraceKeepsTheTimeoutReason(t *testing.T) {
-	blocked := &blockedChecker{name: "stuck", release: make(chan struct{})}
+	blocked := &blockedChecker{
+		name:    "stuck",
+		release: make(chan struct{}),
+		expired: make(chan struct{}),
+	}
 	defer close(blocked.release)
 
 	agg := NewAggregator(100 * time.Millisecond)
@@ -244,9 +255,10 @@ func TestAggregator_Check_HangUpDuringGraceKeepsTheTimeoutReason(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	// Lands after the 50ms check deadline, inside the grace window that follows.
+	// Hang up once the check deadline has passed, so the cancellation lands in
+	// the grace window rather than wherever a sleep happens to put it.
 	go func() {
-		time.Sleep(70 * time.Millisecond)
+		<-blocked.expired
 		cancel()
 	}()
 
