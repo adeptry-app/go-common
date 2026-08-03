@@ -21,7 +21,8 @@ const (
 	authVersionPattern  = "auth_version:%d"
 )
 
-// RefreshTokenKey holds a session's current refresh token. Its presence is what
+// RefreshTokenKey holds a session's rotation state, whose shape belongs to the
+// issuing service alone: read presence, never the value. Its presence is what
 // makes the session live: logout and revocation delete it.
 func RefreshTokenKey(userID int64, sessionID string) string {
 	return fmt.Sprintf(refreshTokenPattern, userID, sessionID)
@@ -84,7 +85,8 @@ func NewStore(client goredis.Cmdable) *Store {
 }
 
 // ValidateSession rejects a token whose session is gone or whose authorization
-// version the user has outgrown. Both reads go out as one round trip.
+// version the user has outgrown. Both reads go out as one round trip. EXISTS
+// keeps this independent of how the issuer models the session it points at.
 func (s *Store) ValidateSession(ctx context.Context, userID int64, session jwt.Session) error {
 	pipe := s.client.Pipeline()
 	live := pipe.Exists(ctx, RefreshTokenKey(userID, session.ID))
