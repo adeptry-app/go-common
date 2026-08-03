@@ -235,6 +235,28 @@ func TestAggregator_Check_CallerCancellationIsNotReportedAsATimeout(t *testing.T
 	}
 }
 
+func TestAggregator_Check_HangUpDuringGraceKeepsTheTimeoutReason(t *testing.T) {
+	blocked := &blockedChecker{name: "stuck", release: make(chan struct{})}
+	defer close(blocked.release)
+
+	agg := NewAggregator(100 * time.Millisecond)
+	agg.Register(blocked)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// Lands after the 50ms check deadline, inside the grace window that follows.
+	go func() {
+		time.Sleep(70 * time.Millisecond)
+		cancel()
+	}()
+
+	health := agg.Check(ctx)
+
+	if got := health.Checks["stuck"].Error; got != "check did not complete within 100ms" {
+		t.Errorf("stuck error = %q, want the deadline it blew, not the later hang-up", got)
+	}
+}
+
 func TestAggregator_Grace_FitsInsideTheConfiguredTimeout(t *testing.T) {
 	tests := []struct {
 		timeout time.Duration

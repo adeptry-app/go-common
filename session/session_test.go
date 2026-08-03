@@ -157,6 +157,24 @@ func TestBumpAuthVersion_FailureLeavesNoKeyWithoutTTL(t *testing.T) {
 	}
 }
 
+func TestBumpAuthVersion_RejectsNonPositiveTTL(t *testing.T) {
+	for _, ttl := range []time.Duration{0, -time.Hour} {
+		t.Run(ttl.String(), func(t *testing.T) {
+			store, mr := newTestStore(t)
+			if err := mr.Set(AuthVersionKey(42), "3"); err != nil {
+				t.Fatalf("seed version: %v", err)
+			}
+
+			if _, err := BumpAuthVersion(context.Background(), store.client, 42, ttl); err == nil {
+				t.Fatal("BumpAuthVersion() error = nil, want the ttl rejected")
+			}
+			if got, _ := mr.Get(AuthVersionKey(42)); got != "3" {
+				t.Errorf("version = %q, want the seeded 3 left alone", got)
+			}
+		})
+	}
+}
+
 func TestNewStore_NilClient(t *testing.T) {
 	defer func() {
 		if r := recover(); r == nil {

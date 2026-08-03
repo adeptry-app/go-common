@@ -50,6 +50,11 @@ func AuthVersion(ctx context.Context, client goredis.Cmdable, userID int64) (int
 // tokens expire. Sessions themselves survive; the next refresh restamps them.
 // ttl must outlive any access token still in circulation.
 func BumpAuthVersion(ctx context.Context, client goredis.Cmdable, userID int64, ttl time.Duration) (int64, error) {
+	// EXPIRE with a non-positive ttl deletes the key, which would drop the bump
+	// this call just made and quietly restore every token it revoked.
+	if ttl <= 0 {
+		return 0, fmt.Errorf("bump auth version: ttl must be positive, got %s", ttl)
+	}
 	key := AuthVersionKey(userID)
 
 	// One transaction, so a failed expiry cannot leave the key without a TTL.
