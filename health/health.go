@@ -20,6 +20,11 @@ const (
 
 	// DefaultTimeout is used when zero or negative timeout is provided
 	DefaultTimeout = 3 * time.Second
+
+	// lateResultGrace is how long the collector keeps taking results after
+	// cancelling the checks, so a checker that honours cancellation reports its
+	// own reason. It is spent inside the configured timeout, not on top of it.
+	lateResultGrace = 50 * time.Millisecond
 )
 
 // CheckResult represents the result of a single health check
@@ -66,6 +71,20 @@ type Health struct {
 	Checks map[string]CheckResult `json:"checks"`
 }
 
+// record stores one check result and folds it into the overall status.
+func (h *Health) record(name string, result CheckResult) {
+	h.Checks[name] = result
+
+	switch result.Status {
+	case StatusUnhealthy:
+		h.Status = StatusUnhealthy
+	case StatusDegraded:
+		if h.Status != StatusUnhealthy {
+			h.Status = StatusDegraded
+		}
+	}
+}
+
 // Aggregator manages multiple health checkers and provides a unified health endpoint
 type Aggregator struct {
 	checkers []Checker
@@ -96,7 +115,16 @@ func (a *Aggregator) Register(checker Checker) {
 	a.checkers = append(a.checkers, checker)
 }
 
-// Check runs all registered health checks and returns the aggregated result
+// checkOutcome is one checker's verdict, tagged with its registration index so
+// two checkers sharing a name still count as two outstanding checks.
+type checkOutcome struct {
+	index  int
+	result CheckResult
+}
+
+// Check runs all registered health checks and returns the aggregated result.
+// The timeout is a hard deadline: a checker that ignores cancellation cannot
+// hold the endpoint open, its slot is reported unhealthy instead.
 func (a *Aggregator) Check(ctx context.Context) Health {
 	a.mu.RLock()
 	checkers := make([]Checker, len(a.checkers))
@@ -112,53 +140,71 @@ func (a *Aggregator) Check(ctx context.Context) Health {
 		return health
 	}
 
-	// Create context with timeout
-	checkCtx, cancel := context.WithTimeout(ctx, a.timeout)
+	start := time.Now()
+	grace := a.grace()
+	checkCtx, cancel := context.WithTimeout(ctx, a.timeout-grace)
 	defer cancel()
 
-	// Run checks concurrently
-	type checkResultWithName struct {
-		name   string
-		result CheckResult
+	// One slot per checker, so a checker that finishes after the deadline hands
+	// its result over and exits rather than blocking on a reader that is gone.
+	results := make(chan checkOutcome, len(checkers))
+	pending := make(map[int]string, len(checkers))
+
+	for i, checker := range checkers {
+		pending[i] = checker.Name()
+		go func() {
+			results <- checkOutcome{index: i, result: checker.Check(checkCtx)}
+		}()
 	}
 
-	results := make(chan checkResultWithName, len(checkers))
-	var wg sync.WaitGroup
-
-	for _, checker := range checkers {
-		wg.Add(1)
-		go func(c Checker) {
-			defer wg.Done()
-			result := c.Check(checkCtx)
-			results <- checkResultWithName{
-				name:   c.Name(),
-				result: result,
-			}
-		}(checker)
-	}
-
-	// Wait for all checks to complete
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-
-	// Collect results
-	for r := range results {
-		health.Checks[r.name] = r.result
-
-		// Update overall status based on individual check results
-		switch r.result.Status {
-		case StatusUnhealthy:
-			health.Status = StatusUnhealthy
-		case StatusDegraded:
-			if health.Status != StatusUnhealthy {
-				health.Status = StatusDegraded
-			}
+	for len(pending) > 0 {
+		select {
+		case r := <-results:
+			health.record(pending[r.index], r.result)
+			delete(pending, r.index)
+		case <-checkCtx.Done():
+			// Read the caller's state now: a disconnect during the grace window
+			// must not be mistaken for the reason the checks were cut short.
+			a.expire(&health, pending, results, start, grace, ctx.Err())
+			return health
 		}
 	}
 
 	return health
+}
+
+// grace is the share of the timeout reserved for cancelled checkers to report,
+// so the whole run still fits inside what the caller configured.
+func (a *Aggregator) grace() time.Duration {
+	if half := a.timeout / 2; half < lateResultGrace {
+		return half
+	}
+	return lateResultGrace
+}
+
+// expire records whatever the cancelled checkers still report within the grace
+// window, then fails every check that never reported at all. callerErr is the
+// caller's context error when it, rather than the timeout, ended the run.
+func (a *Aggregator) expire(health *Health, pending map[int]string, results <-chan checkOutcome, start time.Time, grace time.Duration, callerErr error) {
+	window := time.NewTimer(grace)
+	defer window.Stop()
+
+	for len(pending) > 0 {
+		select {
+		case r := <-results:
+			health.record(pending[r.index], r.result)
+			delete(pending, r.index)
+		case <-window.C:
+			expired := Unhealthy(start, "check did not complete within %s", a.timeout)
+			if callerErr != nil {
+				expired = Unhealthy(start, "check cancelled: %v", callerErr)
+			}
+			for _, name := range pending {
+				health.record(name, expired)
+			}
+			return
+		}
+	}
 }
 
 // Handler returns a gin.HandlerFunc for the health endpoint

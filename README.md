@@ -29,6 +29,7 @@ Shared Go package for common code across microservices.
 | [server](server/) | Router construction and HTTP server with graceful shutdown |
 | [queue](queue/) | RabbitMQ pub/sub with reconnection, retries, and DLQ |
 | [redis](redis/) | Redis client and fixed-window counter |
+| [session](session/) | Redis session state and access-token revocation |
 | [ratelimit](ratelimit/) | Gin rate-limit middleware |
 | [health](health/) | Dependency health checking |
 

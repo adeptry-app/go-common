@@ -36,6 +36,26 @@ audit.ActionFileDownload
 audit.ActionFileDelete
 ```
 
+Credential and identity lifecycle, so support can tell recovery from takeover.
+Metadata carries the reason, never the credential:
+
+```go
+audit.ActionPasswordChangeSuccess
+audit.ActionPasswordChangeFailure
+audit.ActionPasswordSetSuccess
+audit.ActionPasswordSetFailure
+audit.ActionPasswordResetRequest
+audit.ActionPasswordResetSuccess
+audit.ActionPasswordResetFailure
+audit.ActionEmailChangeRequest
+audit.ActionEmailChangeFailure
+audit.ActionEmailVerifySuccess
+audit.ActionEmailVerifyFailure
+audit.ActionOAuthLink
+audit.ActionOAuthUnlink
+audit.ActionSessionsRevoked
+```
+
 ## Resource Types
 
 ```go

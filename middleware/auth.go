@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -46,17 +48,54 @@ func abortUnauthorized(c *gin.Context, reason string) {
 	c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized - " + reason})
 }
 
+// SessionValidator answers whether the session a browser token was minted for is
+// still live. Implementations read Redis or a bounded revocation cache, and
+// return jwt.ErrSessionRevoked when the session is dead or the version has moved on.
+type SessionValidator interface {
+	ValidateSession(ctx context.Context, userID int64, session jwt.Session) error
+}
+
 // AuthMiddleware provides JWT token validation
 type AuthMiddleware struct {
 	verifier jwt.Verifier
+	sessions SessionValidator
+}
+
+// AuthOption customizes the middleware at construction.
+type AuthOption func(*AuthMiddleware)
+
+// WithSessionValidator makes ValidateToken check each browser token against live
+// session state. Without it validation is local only, so nothing a service does
+// to a session takes effect before the token expires.
+// Panics if v is nil: a silently disabled revocation check is worse than a boot failure.
+func WithSessionValidator(v SessionValidator) AuthOption {
+	if v == nil {
+		panic("middleware: cannot use a nil session validator")
+	}
+	return func(m *AuthMiddleware) {
+		m.sessions = v
+	}
 }
 
 // NewAuthMiddleware creates a new auth middleware instance. It takes a Verifier,
 // not an Issuer, so a service behind this middleware cannot mint tokens.
-func NewAuthMiddleware(verifier jwt.Verifier) *AuthMiddleware {
-	return &AuthMiddleware{
+func NewAuthMiddleware(verifier jwt.Verifier, opts ...AuthOption) *AuthMiddleware {
+	m := &AuthMiddleware{
 		verifier: verifier,
 	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// checkSession asks the validator about the token's session. A service token or
+// a token minted before session binding carries no sid and is left alone.
+func (m *AuthMiddleware) checkSession(c *gin.Context, claims *jwt.Claims) error {
+	if m.sessions == nil || claims.SessionID == "" {
+		return nil
+	}
+	return m.sessions.ValidateSession(c.Request.Context(), claims.UserID, claims.Session())
 }
 
 // ValidateToken returns a Gin middleware that validates JWT tokens locally
@@ -86,6 +125,20 @@ func (m *AuthMiddleware) ValidateToken() gin.HandlerFunc {
 				"path", c.Request.URL.Path,
 			)
 			abortUnauthorized(c, "token expired")
+			return
+		}
+
+		if err := m.checkSession(c, claims); err != nil {
+			if errors.Is(err, jwt.ErrSessionRevoked) {
+				abortUnauthorized(c, "session revoked")
+				return
+			}
+			// Failing open here would make every revocation advisory.
+			slog.Error("session validation unavailable",
+				"error", err,
+				"path", c.Request.URL.Path,
+			)
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "session validation unavailable"})
 			return
 		}
 

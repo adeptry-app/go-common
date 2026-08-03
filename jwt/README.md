@@ -78,12 +78,14 @@ identity := jwt.Identity{
         "projects": "edit",
     },
 }
-// Each of these returns an error on a non-positive user id or empty username.
-accessToken, err := issuer.GenerateAccessToken(identity)
+// Browser tokens are bound to the session they were minted for. Each of these
+// returns an error on a non-positive user id, empty username or empty session ID.
+session := jwt.Session{ID: sessionID, AuthVersion: authVersion}
+accessToken, err := issuer.GenerateAccessToken(identity, session)
 if err != nil {
     return err
 }
-refreshToken, err := issuer.GenerateRefreshToken(identity)
+refreshToken, err := issuer.GenerateRefreshToken(identity, session)
 if err != nil {
     return err
 }
@@ -94,6 +96,21 @@ if err != nil {
     return err
 }
 ```
+
+## Sessions
+
+A browser token carries `sid` (the server-side session) and `authv` (the user's
+authorization version at issue time), read back with `claims.Session()`. They are
+the handle a service needs to reject an access token that outlived its session:
+without them, logout and password recovery only take effect at expiry.
+
+Service tokens carry neither, so revoking a browser session leaves
+service-to-service calls up. Tokens minted before session binding also carry
+neither and stay valid until they expire.
+
+`session.AuthVersion` supplies the version to stamp in; `session.Store` reads
+both claims back, and `middleware.WithSessionValidator` turns that into
+enforcement.
 
 ## Audiences
 
