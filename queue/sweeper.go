@@ -4,10 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"time"
+
+	"github.com/adeptry-app/go-common/sweeper"
 )
 
 // DefaultSweepInterval applies when StaleSweeper.Interval is not positive.
-const DefaultSweepInterval = time.Minute
+const DefaultSweepInterval = sweeper.DefaultInterval
 
 // EventPublisher is the publish-only subset of Publisher that StaleSweeper needs.
 type EventPublisher interface {
@@ -42,59 +44,35 @@ type StaleSweeper struct {
 }
 
 // Run sweeps once on entry, then on every tick, and blocks until ctx is
-// cancelled. The entry sweep matters because a worker restarting faster than
-// interval would otherwise never reach a tick.
+// cancelled.
 func (s StaleSweeper) Run(ctx context.Context) {
-	interval := s.Interval
-	if interval <= 0 {
-		interval = DefaultSweepInterval
-	}
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	if ctx.Err() != nil {
-		return
-	}
-	s.pass(ctx)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.pass(ctx)
-		}
-	}
-}
-
-func (s StaleSweeper) logger() *slog.Logger {
-	if s.Logger == nil {
-		return slog.Default()
-	}
-	return s.Logger
+	sweeper.Run(ctx, s.config())
 }
 
 func (s StaleSweeper) pass(ctx context.Context) {
-	log := s.logger()
+	sweeper.Pass(ctx, s.config())
+}
 
-	ids, err := s.Sweep(ctx)
-	if err != nil {
-		log.Error("Sweep stale rows failed", "kind", s.Kind, "error", err)
-		return
+// config expresses re-publishing as the generic loop's Handle: what is
+// queue-specific here is only where a swept id goes.
+func (s StaleSweeper) config() sweeper.Config[int64] {
+	return sweeper.Config[int64]{
+		Sweep:    s.Sweep,
+		Handle:   s.republish,
+		Kind:     s.Kind,
+		Interval: s.Interval,
+		Logger:   s.Logger,
 	}
-	if len(ids) == 0 {
-		return
-	}
+}
 
-	republished := 0
-	for _, id := range ids {
-		if err := s.Publisher.Publish(ctx, s.Event(id)); err != nil {
-			log.Error("Re-publish stale row failed", "kind", s.Kind, "id", id, "error", err)
-			continue
+func (s StaleSweeper) republish(ctx context.Context, id int64) bool {
+	if err := s.Publisher.Publish(ctx, s.Event(id)); err != nil {
+		log := s.Logger
+		if log == nil {
+			log = slog.Default()
 		}
-		republished++
+		log.Error("Re-publish stale row failed", "kind", s.Kind, "id", id, "error", err)
+		return false
 	}
-
-	log.Info("Re-published stale rows", "kind", s.Kind, "republished", republished, "stale", len(ids))
+	return true
 }
