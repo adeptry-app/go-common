@@ -83,23 +83,23 @@ func TestPass_TimeoutBoundsTheWholePass(t *testing.T) {
 
 // A sweep that burns the budget leaves nothing for the handles.
 func TestPass_TimeoutStopsHandlingAfterASlowSweep(t *testing.T) {
-	handleCalled := false
+	handleCalls := 0
 
 	Pass(context.Background(), Loop[string]{
 		Sweep: func(ctx context.Context) ([]string, error) {
 			<-ctx.Done()
-			return []string{"a"}, nil
+			return []string{"a", "b", "c"}, nil
 		},
-		Handle: func(ctx context.Context, _ string) bool {
-			handleCalled = ctx.Err() == nil
+		Handle: func(context.Context, string) bool {
+			handleCalls++
 			return true
 		},
 		Timeout: 10 * time.Millisecond,
 		Logger:  discardLogger(),
 	})
 
-	if handleCalled {
-		t.Error("expected no item handled on a context the sweep already exhausted")
+	if handleCalls != 0 {
+		t.Errorf("handled %d items on a context the sweep already exhausted", handleCalls)
 	}
 }
 

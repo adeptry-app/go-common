@@ -87,6 +87,10 @@ func Pass[T any](ctx context.Context, cfg Loop[T]) {
 
 	settled := 0
 	for _, item := range items {
+		// A sweep that spent the whole deadline leaves nothing to handle with.
+		if ctx.Err() != nil {
+			break
+		}
 		if cfg.Handle(ctx, item) {
 			settled++
 		}
