@@ -7,35 +7,39 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-// SweeperConfig tunes the periodic stale-row sweeper that recovers work whose
-// queue message was lost (publish failed, or landed unconfirmed) or whose
-// worker died mid-job.
-type SweeperConfig struct {
+// SweeperLoop tunes any recovery loop: pass cadence and pass deadline.
+type SweeperLoop struct {
 	// Interval between recovery passes.
 	Interval time.Duration `validate:"min=1s"`
 
-	// PendingAge is how long a never-claimed row may sit before it counts as
-	// stale, anchored on its creation time.
+	// PassTimeout bounds one whole pass.
+	PassTimeout time.Duration `validate:"min=1s"`
+}
+
+// NewSweeperLoop loads <prefix>_INTERVAL and <prefix>_PASS_TIMEOUT.
+func NewSweeperLoop(prefix string, defaultInterval, defaultPassTimeout time.Duration) SweeperLoop {
+	return SweeperLoop{
+		Interval:    GetEnvDuration(prefix+"_INTERVAL", defaultInterval),
+		PassTimeout: GetEnvDuration(prefix+"_PASS_TIMEOUT", defaultPassTimeout),
+	}
+}
+
+// SweeperConfig tunes the stale-row sweeper behind the queue.
+type SweeperConfig struct {
+	SweeperLoop
+
+	// PendingAge is how long a never-claimed row may sit, from created_at.
 	PendingAge time.Duration `validate:"min=1s"`
 
-	// ProcessingAge is how long an in-flight or retrying row may sit quiet
-	// before it counts as stale. Derived from the retry ladder, never a fixed
-	// default: see NewSweeperConfig.
+	// ProcessingAge is how long an in-flight or retrying row may sit quiet.
 	ProcessingAge time.Duration `validate:"min=1s"`
 
-	// MaxAttempts is the attempt budget; a stale row at or past it is failed
-	// instead of re-published.
+	// MaxAttempts is the attempt budget; a row at or past it is failed.
 	MaxAttempts int `validate:"min=1"`
 }
 
-// NewSweeperConfig loads sweeper tuning from the environment, sizing
-// ProcessingAge against the caller's retry ladder and job timeout. It panics if
-// any value is malformed, out of range, or below that floor.
-//
-// A retrying row legitimately sits quiet for the longest rung and a processing
-// row for the job timeout, so a ProcessingAge at or under their sum
-// double-publishes live work and burns the attempt budget. The floor cannot be
-// a constant: it depends entirely on config this constructor is handed.
+// NewSweeperConfig loads sweeper tuning, sizing ProcessingAge against the
+// caller's retry ladder plus job timeout. Panics below that floor.
 func NewSweeperConfig(retryDelays []time.Duration, jobTimeout time.Duration) SweeperConfig {
 	var maxRetryDelay time.Duration
 	for _, d := range retryDelays {
@@ -43,11 +47,11 @@ func NewSweeperConfig(retryDelays []time.Duration, jobTimeout time.Duration) Swe
 	}
 	floor := maxRetryDelay + jobTimeout
 
-	interval := GetEnvDuration("SWEEPER_INTERVAL", time.Minute)
+	loop := NewSweeperLoop("SWEEPER", time.Minute, 2*time.Minute)
 	cfg := SweeperConfig{
-		Interval:      interval,
+		SweeperLoop:   loop,
 		PendingAge:    GetEnvDuration("SWEEPER_PENDING_AGE", 2*time.Minute),
-		ProcessingAge: GetEnvDuration("SWEEPER_PROCESSING_AGE", floor+interval),
+		ProcessingAge: GetEnvDuration("SWEEPER_PROCESSING_AGE", floor+loop.Interval),
 		MaxAttempts:   GetEnvInt("SWEEPER_MAX_ATTEMPTS", 4),
 	}
 

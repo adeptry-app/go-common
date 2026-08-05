@@ -24,7 +24,7 @@ func staticSweep(items ...string) func(context.Context) ([]string, error) {
 func TestPass_HandlesEveryItem(t *testing.T) {
 	var handled []string
 
-	Pass(context.Background(), Config[string]{
+	Pass(context.Background(), Loop[string]{
 		Sweep: staticSweep("a", "b", "c"),
 		Handle: func(_ context.Context, item string) bool {
 			handled = append(handled, item)
@@ -42,7 +42,7 @@ func TestPass_HandlesEveryItem(t *testing.T) {
 func TestPass_ContinuesPastAFailingItem(t *testing.T) {
 	var handled []string
 
-	Pass(context.Background(), Config[string]{
+	Pass(context.Background(), Loop[string]{
 		Sweep: staticSweep("a", "b", "c"),
 		Handle: func(_ context.Context, item string) bool {
 			handled = append(handled, item)
@@ -56,10 +56,74 @@ func TestPass_ContinuesPastAFailingItem(t *testing.T) {
 	}
 }
 
+// The deadline covers the sweep and every handle, not each call separately.
+func TestPass_TimeoutBoundsTheWholePass(t *testing.T) {
+	var sweepDeadline, handleDeadline time.Time
+
+	Pass(context.Background(), Loop[string]{
+		Sweep: func(ctx context.Context) ([]string, error) {
+			sweepDeadline, _ = ctx.Deadline()
+			return []string{"a"}, nil
+		},
+		Handle: func(ctx context.Context, _ string) bool {
+			handleDeadline, _ = ctx.Deadline()
+			return true
+		},
+		Timeout: time.Minute,
+		Logger:  discardLogger(),
+	})
+
+	if sweepDeadline.IsZero() {
+		t.Fatal("expected the sweep to run under a deadline")
+	}
+	if !handleDeadline.Equal(sweepDeadline) {
+		t.Error("expected one deadline across the pass, not one per call")
+	}
+}
+
+// A sweep that burns the budget leaves nothing for the handles.
+func TestPass_TimeoutStopsHandlingAfterASlowSweep(t *testing.T) {
+	handleCalls := 0
+
+	Pass(context.Background(), Loop[string]{
+		Sweep: func(ctx context.Context) ([]string, error) {
+			<-ctx.Done()
+			return []string{"a", "b", "c"}, nil
+		},
+		Handle: func(context.Context, string) bool {
+			handleCalls++
+			return true
+		},
+		Timeout: 10 * time.Millisecond,
+		Logger:  discardLogger(),
+	})
+
+	if handleCalls != 0 {
+		t.Errorf("handled %d items on a context the sweep already exhausted", handleCalls)
+	}
+}
+
+func TestPass_NoTimeoutLeavesTheContextAlone(t *testing.T) {
+	hasDeadline := true
+
+	Pass(context.Background(), Loop[string]{
+		Sweep: func(ctx context.Context) ([]string, error) {
+			_, hasDeadline = ctx.Deadline()
+			return nil, nil
+		},
+		Handle: func(context.Context, string) bool { return true },
+		Logger: discardLogger(),
+	})
+
+	if hasDeadline {
+		t.Error("expected no deadline when none was configured")
+	}
+}
+
 func TestPass_SweepErrorHandlesNothing(t *testing.T) {
 	handleCalled := false
 
-	Pass(context.Background(), Config[string]{
+	Pass(context.Background(), Loop[string]{
 		Sweep: func(context.Context) ([]string, error) { return nil, errors.New("database error") },
 		Handle: func(context.Context, string) bool {
 			handleCalled = true
@@ -77,15 +141,14 @@ func TestPass_SweepErrorHandlesNothing(t *testing.T) {
 // Run Tests
 // =============================================================================
 
-// A service restarting faster than the interval would never reach a tick, so
-// the first pass runs on entry.
+// The first pass runs on entry, before any tick.
 func TestRun_SweepsBeforeFirstTick(t *testing.T) {
 	passes := make(chan struct{}, 1)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go Run(ctx, Config[string]{
+	go Run(ctx, Loop[string]{
 		Sweep: func(context.Context) ([]string, error) {
 			passes <- struct{}{}
 			return nil, nil
@@ -108,10 +171,9 @@ func TestRun_SweepsUntilContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		Run(ctx, Config[string]{
+		Run(ctx, Loop[string]{
 			Sweep: func(context.Context) ([]string, error) {
-				// Non-blocking: a full buffer must not pin the goroutine, or it
-				// never observes the cancellation below.
+				// Non-blocking: a full buffer must not pin the goroutine.
 				select {
 				case passes <- struct{}{}:
 				default:
@@ -142,15 +204,14 @@ func TestRun_SweepsUntilContextCancelled(t *testing.T) {
 	}
 }
 
-// A zero Interval and a nil Logger must fall back rather than panic, and an
-// already-cancelled context must return before spending a pass.
+// A zero Interval and a nil Logger fall back; a cancelled context sweeps nothing.
 func TestRun_AppliesDefaults(t *testing.T) {
 	passes := 0
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	cfg := Config[string]{
+	cfg := Loop[string]{
 		Sweep: func(context.Context) ([]string, error) {
 			passes++
 			return []string{"a"}, nil
@@ -158,7 +219,7 @@ func TestRun_AppliesDefaults(t *testing.T) {
 		Handle: func(context.Context, string) bool { return true },
 	}
 
-	// Run returns before any pass here, so the nil logger is exercised directly.
+	// Exercises the nil-logger path, which Run skips on a cancelled context.
 	Pass(context.Background(), cfg)
 	passes = 0
 
