@@ -49,6 +49,8 @@ func PgErrorResponse(err error) (status int, msg string, ok bool) {
 		return http.StatusConflict, "resource already exists", true
 	case "23503": // foreign_key_violation
 		return http.StatusBadRequest, "referenced resource not found", true
+	case "23001": // restrict_violation — ON DELETE RESTRICT, split off 23503 in PG 18
+		return http.StatusConflict, "resource is still referenced", true
 	case "23514": // check_violation
 		return http.StatusBadRequest, "validation constraint failed", true
 	case "P0002": // no_data_found

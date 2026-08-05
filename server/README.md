@@ -18,12 +18,12 @@ if err != nil {
 }
 
 serverCfg := server.DefaultConfig("8080")
-if err := server.Run(router, serverCfg, appLogger); err != nil {
+if err := server.Run(ctx, router, serverCfg, appLogger); err != nil {
     log.Fatal(err)
 }
 
 // With cleanup function for resource cleanup
-server.RunWithCleanup(router, serverCfg, appLogger, func() {
+server.RunWithCleanup(ctx, router, serverCfg, appLogger, func() {
     db.Close()
     publisher.Close()
 })
@@ -45,7 +45,9 @@ cfg := server.Config{
 
 - `NewRouter` applies `ServiceConfig.TrustedProxies`, panic recovery, request
   logging, metrics and CORS, and switches gin to release mode in production
-- Graceful shutdown on SIGINT/SIGTERM
+- Graceful shutdown on SIGINT/SIGTERM, or on cancellation of the context passed
+  to `Run`, so a failed background worker can end the process through this
+  boundary instead of exiting under it
 - Configurable timeouts with sensible defaults
 - Structured logging integration
 - Optional cleanup function for resource release

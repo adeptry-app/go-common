@@ -86,10 +86,13 @@ func (c Config) withDefaults() Config {
 // Run starts an HTTP server with graceful shutdown support.
 // It blocks until either:
 //   - SIGTERM or SIGINT is received (graceful shutdown), or
+//   - ctx is cancelled (graceful shutdown), which is how a background worker
+//     whose own lifecycle ended brings the process down through this boundary
+//     rather than exiting under it, or
 //   - ListenAndServe fails to start (returns error immediately)
 //
 // The handler is typically a *gin.Engine or any http.Handler.
-func Run(handler http.Handler, cfg Config, logger *slog.Logger) error {
+func Run(ctx context.Context, handler http.Handler, cfg Config, logger *slog.Logger) error {
 	if handler == nil {
 		return fmt.Errorf("handler cannot be nil")
 	}
@@ -113,6 +116,8 @@ func Run(handler http.Handler, cfg Config, logger *slog.Logger) error {
 	// Channel to receive shutdown signals
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	// Run can now return without the process ending, so the registration goes too.
+	defer signal.Stop(quit)
 
 	// Channel to receive server errors
 	serverErr := make(chan error, 1)
@@ -131,15 +136,17 @@ func Run(handler http.Handler, cfg Config, logger *slog.Logger) error {
 		return fmt.Errorf("server error: %w", err)
 	case sig := <-quit:
 		logger.Info("Shutdown signal received", "signal", sig.String())
+	case <-ctx.Done():
+		logger.Info("Shutdown requested by caller", "reason", ctx.Err())
 	}
 
-	// Create context with timeout for shutdown
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
+	// Detached from ctx, which is usually the thing that just asked for this.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	// Attempt graceful shutdown
 	logger.Info("Shutting down server", "timeout", cfg.ShutdownTimeout.String())
-	if err := srv.Shutdown(ctx); err != nil {
+	if err := srv.Shutdown(shutdownCtx); err != nil {
 		return fmt.Errorf("server shutdown error: %w", err)
 	}
 
@@ -151,13 +158,13 @@ func Run(handler http.Handler, cfg Config, logger *slog.Logger) error {
 // The cleanup function is always called (if non-nil) after Run returns, regardless of whether
 // the server shut down gracefully or failed to start. This ensures resources like database
 // connections are always released. Use this to close database connections, flush buffers, etc.
-func RunWithCleanup(handler http.Handler, cfg Config, logger *slog.Logger, cleanup func()) error {
+func RunWithCleanup(ctx context.Context, handler http.Handler, cfg Config, logger *slog.Logger, cleanup func()) error {
 	// Guard against nil logger for cleanup logging
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	err := Run(handler, cfg, logger)
+	err := Run(ctx, handler, cfg, logger)
 
 	if cleanup != nil {
 		logger.Info("Running cleanup")
