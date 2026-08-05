@@ -26,6 +26,8 @@ func TestPgErrorResponse(t *testing.T) {
 
 		{"unique violation", pgErr("23505", ""), http.StatusConflict, "resource already exists", true},
 		{"foreign key", pgErr("23503", ""), http.StatusBadRequest, "referenced resource not found", true},
+		// PG 18 raises this, not 23503, when ON DELETE RESTRICT blocks a delete.
+		{"restrict violation", pgErr("23001", ""), http.StatusConflict, "resource is still referenced", true},
 		{"check violation", pgErr("23514", ""), http.StatusBadRequest, "validation constraint failed", true},
 		{"no data found", pgErr("P0002", ""), http.StatusNotFound, "not found", true},
 		{"insufficient privilege", pgErr("42501", ""), http.StatusForbidden, "access denied", true},
