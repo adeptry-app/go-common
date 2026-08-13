@@ -2,9 +2,9 @@
 package audit
 
 import (
-	"context"
 	"encoding/json"
 
+	"github.com/adeptry-app/go-common/handlers"
 	"github.com/adeptry-app/go-common/logger"
 	"github.com/adeptry-app/go-common/middleware"
 	"github.com/adeptry-app/go-common/repository"
@@ -160,8 +160,11 @@ func LogAction(c *gin.Context, repo repository.ActionLogRepository, actionType s
 	}
 
 	// The entry must outlive the request it describes, so a caller that
-	// disconnects cannot erase its own trail.
-	if err := repo.LogAction(context.WithoutCancel(c.Request.Context()), actionLog); err != nil {
+	// disconnects cannot erase its own trail. Bounded, so it cannot hang either.
+	ctx, cancel := handlers.DetachedContext(c.Request.Context())
+	defer cancel()
+
+	if err := repo.LogAction(ctx, actionLog); err != nil {
 		logger.GetLogger(c).Error("Failed to log audit action",
 			"error", err,
 			"action_type", actionType,

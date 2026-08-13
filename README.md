@@ -36,6 +36,7 @@ Shared Go package for common code across microservices.
 
 ```go
 import (
+    "context"
     "log"
     "time"
 
@@ -55,6 +56,9 @@ appLogger := logger.New(logger.Config{ServiceName: "example"})
 metricsCollector := metrics.New(metrics.Config{ServiceName: "example"})
 
 // Database
+ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+defer cancel()
+
 pool, err := database.NewPgxPool(ctx, dbCfg, "example")
 if err != nil {
     log.Fatalf("database: %v", err)
