@@ -17,10 +17,9 @@ Shared Go package for common code across microservices.
 | Package | Description |
 | ------- | ----------- |
 | [config](config/) | Configuration management and environment helpers |
-| [database](database/) | PostgreSQL connection with GORM |
+| [database](database/) | PostgreSQL connection pooling with pgx |
 | [jwt](jwt/) | EdDSA token issuing and local validation |
 | [middleware](middleware/) | Auth and security middleware for Gin |
-| [models](models/) | Shared GORM database models |
 | [audit](audit/) | Security event logging |
 | [repository](repository/) | Shared repository implementations |
 | [handlers](handlers/) | Common HTTP handler utilities |
@@ -56,15 +55,11 @@ appLogger := logger.New(logger.Config{ServiceName: "example"})
 metricsCollector := metrics.New(metrics.Config{ServiceName: "example"})
 
 // Database
-db, err := database.Connect(dbCfg)
+pool, err := database.NewPgxPool(ctx, dbCfg, "example")
 if err != nil {
     log.Fatalf("database: %v", err)
 }
-defer func() {
-    if err := database.CloseDB(db); err != nil {
-        log.Printf("failed to close database: %v", err)
-    }
-}()
+defer pool.Close()
 
 // Auth middleware. Only the auth service builds a jwt.Issuer; every other
 // service takes public keys and its own audience, so it cannot mint tokens.
@@ -82,7 +77,7 @@ if err != nil {
 
 // Health checks
 healthAgg := health.NewAggregator(3 * time.Second)
-healthAgg.Register(health.NewPostgresChecker(db))
+healthAgg.Register(health.NewPgxChecker(pool))
 router.GET("/health", healthAgg.Handler())
 ```
 

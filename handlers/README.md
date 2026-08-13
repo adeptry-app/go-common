@@ -52,10 +52,8 @@ the client verbatim (that is the contract for business rules raised in SQL),
 everything else is logged behind a fixed message. `PgErrorResponse` is the same
 mapping as a pure function, for callers that render errors themselves.
 
-`HandleRepositoryError` is the GORM entry point and shares that mapping: the
-driver errors arrive untranslated, so a cancelled request or a constraint
-violation is a `*pgconn.PgError` there too and must not read as a 500. It is
-transitional - GORM is being retired in favour of Postgres routine calls.
+`HandleRepositoryError` shares that mapping for repositories that word their
+own not-found and internal messages.
 
 ### Post-commit work
 

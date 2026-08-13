@@ -54,13 +54,6 @@ go test -v ./health/
 | HTTP Handler | 200 OK, 503 responses |
 | Concurrency | Thread-safe Register |
 
-**`health/postgres_test.go`**
-
-| Category | Coverage |
-| -------- | -------- |
-| Constructor | NewPostgresChecker, Name |
-| Error Handling | Nil database |
-
 **`database/pgx_test.go`**
 
 | Category | Coverage |

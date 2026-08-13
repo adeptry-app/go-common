@@ -1,48 +1,48 @@
 package repository
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"time"
 
-	"gorm.io/gorm"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// ActionLog represents an entry in the audit.action_log table
+// ActionLog is one entry for the audit.action_log table. The row id and its
+// timestamp are the database's to assign and nothing reads them back.
 type ActionLog struct {
-	ID           int64           `json:"id" gorm:"primaryKey"`
-	ActionType   string          `json:"action_type" gorm:"column:action_type"`
-	ResourceType *string         `json:"resource_type,omitempty" gorm:"column:resource_type"`
-	ResourceID   *int64          `json:"resource_id,omitempty" gorm:"column:resource_id"`
-	UserID       *int64          `json:"user_id,omitempty" gorm:"column:user_id"`
-	IPAddress    *string         `json:"ip_address,omitempty" gorm:"column:ip_address"`
-	UserAgent    *string         `json:"user_agent,omitempty" gorm:"column:user_agent"`
-	Source       *string         `json:"source,omitempty" gorm:"column:source"`
-	Metadata     json.RawMessage `json:"metadata,omitempty" gorm:"column:metadata;type:jsonb"`
-	CreatedAt    time.Time       `json:"created_at" gorm:"column:created_at"`
-}
-
-func (ActionLog) TableName() string {
-	return "audit.action_log"
+	ActionType   string          `json:"actionType"`
+	ResourceType *string         `json:"resourceType,omitempty"`
+	ResourceID   *int64          `json:"resourceId,omitempty"`
+	UserID       *int64          `json:"userId,omitempty"`
+	IPAddress    *string         `json:"ipAddress,omitempty"`
+	UserAgent    *string         `json:"userAgent,omitempty"`
+	Source       *string         `json:"source,omitempty"`
+	Metadata     json.RawMessage `json:"metadata,omitempty"`
 }
 
 // ActionLogRepository handles action log database operations
 type ActionLogRepository interface {
-	LogAction(log *ActionLog) error
+	LogAction(ctx context.Context, log *ActionLog) error
 }
 
 type actionLogRepository struct {
-	db *gorm.DB
+	pool *pgxpool.Pool
 }
 
 // NewActionLogRepository creates a new action log repository
-func NewActionLogRepository(db *gorm.DB) ActionLogRepository {
-	return &actionLogRepository{db: db}
+func NewActionLogRepository(pool *pgxpool.Pool) ActionLogRepository {
+	return &actionLogRepository{pool: pool}
 }
 
-// LogAction inserts a new action log entry
-func (r *actionLogRepository) LogAction(log *ActionLog) error {
-	if err := r.db.Create(log).Error; err != nil {
+// LogAction appends one entry to the audit trail.
+func (r *actionLogRepository) LogAction(ctx context.Context, log *ActionLog) error {
+	payload, err := json.Marshal(log)
+	if err != nil {
+		return fmt.Errorf("failed to marshal action log: %w", err)
+	}
+
+	if _, err := r.pool.Exec(ctx, "SELECT audit.log_action($1::jsonb)", payload); err != nil {
 		return fmt.Errorf("failed to create action log: %w", err)
 	}
 	return nil

@@ -2,6 +2,7 @@
 package audit
 
 import (
+	"context"
 	"encoding/json"
 
 	"github.com/adeptry-app/go-common/logger"
@@ -125,14 +126,14 @@ func GetUserID(c *gin.Context) *int64 {
 
 // LogFromContext logs an action using context values (IP, UA, user_id)
 // This is the recommended way to log audit events - requires ContextMiddleware
-// Errors are logged internally and not returned to avoid blocking business operations
+// Errors are logged and returned; callers discard them rather than fail the operation
 func LogFromContext(c *gin.Context, repo repository.ActionLogRepository, actionType string, resourceType *string, resourceID *int64, source *string, metadata map[string]interface{}) error {
 	return LogAction(c, repo, actionType, resourceType, resourceID, GetUserID(c), source, metadata)
 }
 
 // LogAction is a helper that logs an action with explicit user ID and source
 // Use LogFromContext instead when user_id is in context from auth middleware
-// Errors are logged internally and not returned to avoid blocking business operations
+// Errors are logged and returned; callers discard them rather than fail the operation
 func LogAction(c *gin.Context, repo repository.ActionLogRepository, actionType string, resourceType *string, resourceID *int64, userID *int64, source *string, metadata map[string]interface{}) error {
 	var metadataJSON json.RawMessage
 	if metadata != nil {
@@ -158,7 +159,9 @@ func LogAction(c *gin.Context, repo repository.ActionLogRepository, actionType s
 		Metadata:     metadataJSON,
 	}
 
-	if err := repo.LogAction(actionLog); err != nil {
+	// The entry must outlive the request it describes, so a caller that
+	// disconnects cannot erase its own trail.
+	if err := repo.LogAction(context.WithoutCancel(c.Request.Context()), actionLog); err != nil {
 		logger.GetLogger(c).Error("Failed to log audit action",
 			"error", err,
 			"action_type", actionType,

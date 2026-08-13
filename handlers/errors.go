@@ -2,26 +2,18 @@
 package handlers
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/adeptry-app/go-common/logger"
 	"github.com/gin-gonic/gin"
-	"github.com/jackc/pgx/v5"
-	"gorm.io/gorm"
 )
 
-// HandleRepositoryError answers a GORM repository error: its own not-found
-// with notFoundMsg, then the shared database mapping, then a logged 500 with
-// internalMsg.
-//
-// The driver errors reach us untranslated (gorm.Config sets no TranslateError),
-// so a cancelled request or a constraint violation is a *pgconn.PgError here
-// too and must not be reported as a server fault.
+// HandleRepositoryError answers a repository error: not-found with
+// notFoundMsg, then the shared database mapping, then a logged 500 with
+// internalMsg. Which flavour of not-found the driver produced is read from
+// PgErrorResponse, so the two cannot disagree.
 func HandleRepositoryError(c *gin.Context, err error, notFoundMsg, internalMsg string) {
-	// Every flavour of not-found answers with the caller's wording: which one
-	// the driver produced is not something the client should be able to tell.
-	if errors.Is(err, gorm.ErrRecordNotFound) || errors.Is(err, pgx.ErrNoRows) || IsNoDataFound(err) {
+	if status, _, ok := PgErrorResponse(err); ok && status == http.StatusNotFound {
 		RespondError(c, http.StatusNotFound, notFoundMsg)
 		return
 	}

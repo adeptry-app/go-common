@@ -1,35 +1,12 @@
 # database
 
-Database connection utilities for GORM and pgx with connection pooling.
-
-## GORM Usage
-
-Both entry points take the shared `config.DatabaseConfig`.
-
-```go
-import (
-    "log"
-
-    "github.com/adeptry-app/go-common/config"
-    "github.com/adeptry-app/go-common/database"
-)
-
-db, err := database.Connect(config.NewDatabaseConfig())
-if err != nil {
-    log.Fatal(err)
-}
-defer func() {
-    if closeErr := database.CloseDB(db); closeErr != nil {
-        log.Printf("failed to close database: %v", closeErr)
-    }
-}()
-```
+PostgreSQL connection pooling for pgx.
 
 ## pgx Usage
 
-For services using pgx directly instead of GORM. Builds the pool from the
-shared `config.DatabaseConfig` and verifies connectivity with a ping. The
-appName argument is reported as the PostgreSQL `application_name`.
+Builds the pool from the shared `config.DatabaseConfig` and verifies
+connectivity with a ping. The appName argument is reported as the PostgreSQL
+`application_name`.
 
 ```go
 import (
@@ -81,8 +58,6 @@ other scan targets.
 
 ## Functions
 
-- `Connect(cfg config.DatabaseConfig) (*gorm.DB, error)` - PostgreSQL via GORM
-- `CloseDB(db *gorm.DB) error` - Close database connection
 - `NewPgxPool(ctx, cfg, appName, opts...)` - Create a pgx connection pool
   from `config.DatabaseConfig`
 - `WithPoolSize(maxConns, minConns int32) PgxPoolOption` - Set pool sizing
