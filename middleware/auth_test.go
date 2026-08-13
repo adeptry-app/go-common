@@ -219,6 +219,59 @@ func TestValidateToken_SessionValidation(t *testing.T) {
 	}
 }
 
+func TestValidateTokenOptional(t *testing.T) {
+	issuer, verifier := newTestPair(t)
+
+	identity := jwt.Identity{UserID: 42, Username: "kaladin"}
+	valid, err := issuer.GenerateAccessToken(identity, testSession)
+	if err != nil {
+		t.Fatalf("GenerateAccessToken() error = %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		token        string
+		validatorErr error
+		wantStatus   int
+		wantIdentity bool
+	}{
+		{"no token", "", nil, http.StatusOK, false},
+		{"valid token", valid, nil, http.StatusOK, true},
+		{"garbage token", "not-a-jwt", nil, http.StatusOK, false},
+		{"revoked session", valid, jwt.ErrSessionRevoked, http.StatusOK, false},
+		{"validator unreachable", valid, errors.New("redis down"), http.StatusServiceUnavailable, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gin.SetMode(gin.TestMode)
+			validator := &recordingValidator{err: tt.validatorErr}
+			gotIdentity := false
+
+			router := gin.New()
+			router.Use(NewAuthMiddleware(verifier, WithSessionValidator(validator)).ValidateTokenOptional())
+			router.GET("/compendium", func(c *gin.Context) {
+				_, gotIdentity = GetIdentity(c)
+				c.Status(http.StatusOK)
+			})
+
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/compendium", nil)
+			if tt.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tt.token)
+			}
+			router.ServeHTTP(w, req)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+			if gotIdentity != tt.wantIdentity {
+				t.Errorf("identity present = %v, want %v", gotIdentity, tt.wantIdentity)
+			}
+		})
+	}
+}
+
 func TestExtractToken(t *testing.T) {
 	tests := []struct {
 		name       string

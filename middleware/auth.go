@@ -98,54 +98,97 @@ func (m *AuthMiddleware) checkSession(c *gin.Context, claims *jwt.Claims) error 
 	return m.sessions.ValidateSession(c.Request.Context(), claims.UserID, claims.Session())
 }
 
+// authOutcome is what validateAndStore decided about one request. The two entry
+// points below differ only in which outcomes they treat as fatal.
+type authOutcome int
+
+const (
+	authOK authOutcome = iota
+	authNoToken
+	authInvalid
+	authExpired
+	authRevoked
+	authValidatorDown
+)
+
+// validateAndStore validates the caller's token and, on success, stores the TTL
+// and identity. It writes no response, so both middlewares share one code path.
+func (m *AuthMiddleware) validateAndStore(c *gin.Context) authOutcome {
+	token := ExtractToken(c)
+	if token == "" {
+		return authNoToken
+	}
+
+	// Validate locally; refresh tokens are only valid at the token endpoint
+	claims, err := m.verifier.ValidateAccessToken(token)
+	if err != nil {
+		slog.Warn("token validation failed",
+			"error", err,
+			"path", c.Request.URL.Path,
+		)
+		return authInvalid
+	}
+
+	// Get TTL from claims
+	ttl := claims.GetTTL()
+	if ttl <= 0 {
+		slog.Warn("token expired",
+			"path", c.Request.URL.Path,
+		)
+		return authExpired
+	}
+
+	if err := m.checkSession(c, claims); err != nil {
+		if errors.Is(err, jwt.ErrSessionRevoked) {
+			return authRevoked
+		}
+		// Failing open here would make every revocation advisory.
+		slog.Error("session validation unavailable",
+			"error", err,
+			"path", c.Request.URL.Path,
+		)
+		return authValidatorDown
+	}
+
+	// Store TTL and the token subject for downstream handlers
+	c.Set(ctxKeyTokenTTL, ttl)
+	SetIdentity(c, claims.Identity)
+
+	return authOK
+}
+
 // ValidateToken returns a Gin middleware that validates JWT tokens locally
 func (m *AuthMiddleware) ValidateToken() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		token := ExtractToken(c)
-		if token == "" {
+		switch m.validateAndStore(c) {
+		case authOK:
+			c.Next()
+		case authNoToken:
 			abortUnauthorized(c, "no token provided")
-			return
-		}
-
-		// Validate locally; refresh tokens are only valid at the token endpoint
-		claims, err := m.verifier.ValidateAccessToken(token)
-		if err != nil {
-			slog.Warn("token validation failed",
-				"error", err,
-				"path", c.Request.URL.Path,
-			)
+		case authInvalid:
 			abortUnauthorized(c, "invalid token")
-			return
-		}
-
-		// Get TTL from claims
-		ttl := claims.GetTTL()
-		if ttl <= 0 {
-			slog.Warn("token expired",
-				"path", c.Request.URL.Path,
-			)
+		case authExpired:
 			abortUnauthorized(c, "token expired")
-			return
+		case authRevoked:
+			abortUnauthorized(c, "session revoked")
+		case authValidatorDown:
+			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "session validation unavailable"})
+		default:
+			abortUnauthorized(c, "invalid token")
 		}
+	}
+}
 
-		if err := m.checkSession(c, claims); err != nil {
-			if errors.Is(err, jwt.ErrSessionRevoked) {
-				abortUnauthorized(c, "session revoked")
-				return
-			}
-			// Failing open here would make every revocation advisory.
-			slog.Error("session validation unavailable",
-				"error", err,
-				"path", c.Request.URL.Path,
-			)
+// ValidateTokenOptional returns a Gin middleware for routes that serve both
+// anonymous and authenticated callers. A missing, invalid, expired or revoked
+// token continues the chain with no identity; only a validator outage aborts,
+// because failing open there would let a revoked session read wider scope.
+func (m *AuthMiddleware) ValidateTokenOptional() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if m.validateAndStore(c) == authValidatorDown {
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{"error": "session validation unavailable"})
 			return
 		}
-
-		// Store TTL and the token subject for downstream handlers
-		c.Set(ctxKeyTokenTTL, ttl)
-		SetIdentity(c, claims.Identity)
-
 		c.Next()
 	}
 }
