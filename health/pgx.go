@@ -12,9 +12,8 @@ type PgxChecker struct {
 	pool *pgxpool.Pool
 }
 
-// NewPgxChecker creates a PostgreSQL health checker for a pgx pool. It
-// reports under the same "postgres" name as the GORM checker, so register
-// one or the other per service, not both.
+// NewPgxChecker creates a PostgreSQL health checker for a pgx pool, reported
+// under the name "postgres".
 func NewPgxChecker(pool *pgxpool.Pool) Checker {
 	return &PgxChecker{pool: pool}
 }

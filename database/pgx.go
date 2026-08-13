@@ -96,7 +96,7 @@ func buildPgxConfig(cfg config.DatabaseConfig, appName string, opts ...PgxPoolOp
 		return nil, fmt.Errorf("parse pool config: %w", err)
 	}
 
-	// Defaults; lifetime and idle settings match the GORM Connect defaults.
+	// Defaults; callers size their own pool per service.
 	poolCfg.MaxConns = 10
 	poolCfg.MinConns = 2
 	poolCfg.MaxConnLifetime = time.Hour

@@ -15,7 +15,7 @@ import (
 healthAgg := health.NewAggregator(3 * time.Second)
 
 // Register checkers
-healthAgg.Register(health.NewPostgresChecker(db))
+healthAgg.Register(health.NewPgxChecker(pool))
 healthAgg.Register(health.NewRabbitMQCheckerWithProvider(publisher.Connection))
 healthAgg.Register(
     health.NewQueueDepthChecker(publisher.Connection, publisher.DLQName(), 0))
@@ -50,9 +50,7 @@ router.GET("/health", healthAgg.Handler())
 
 ## Available Checkers
 
-- `NewPostgresChecker(db *gorm.DB)` - PostgreSQL ping (GORM)
-- `NewPgxChecker(pool *pgxpool.Pool)` - PostgreSQL ping (pgx pool); same
-  "postgres" name as the GORM checker, register one or the other
+- `NewPgxChecker(pool *pgxpool.Pool)` - PostgreSQL ping, reported as "postgres"
 - `NewRabbitMQChecker(conn *amqp.Connection)` - Connection status (fixed
   connection; goes stale if the owner reconnects)
 - `NewRabbitMQCheckerWithProvider(provider func() *amqp.Connection)` -
