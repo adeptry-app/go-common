@@ -121,14 +121,16 @@ func TestVerifyQueue_BoundsDeadlinelessCaller(t *testing.T) {
 	fake := newFakeSQS()
 	cfg := testConfig(time.Minute)
 
+	start := time.Now()
 	if err := verifyQueue(context.Background(), fake, cfg.QueueURL); err != nil {
 		t.Fatalf("verifyQueue() = %v, want nil for a reachable queue", err)
 	}
+
 	if fake.verifyDeadline.IsZero() {
 		t.Fatal("GetQueueAttributes ran with no deadline; a stalled endpoint would hang")
 	}
-	if budget := time.Until(fake.verifyDeadline); budget > verifyTimeout {
-		t.Errorf("deadline is %v out, want at most verifyTimeout (%v)", budget, verifyTimeout)
+	if drift := fake.verifyDeadline.Sub(start.Add(verifyTimeout)); drift < 0 || drift > time.Second {
+		t.Errorf("deadline is %v off verifyTimeout (%v), want the whole budget", drift, verifyTimeout)
 	}
 }
 
@@ -137,15 +139,19 @@ func TestVerifyQueue_StalledEndpoint(t *testing.T) {
 	fake.attributeStall = true
 	cfg := testConfig(time.Minute)
 
-	// The caller deadline is the earlier one, so it ends the stall, not verifyTimeout.
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
+	callerDeadline, _ := ctx.Deadline()
 
 	start := time.Now()
 	err := verifyQueue(ctx, fake, cfg.QueueURL)
 
 	if !errors.Is(err, ErrQueueUnavailable) {
 		t.Errorf("verifyQueue() = %v, want ErrQueueUnavailable", err)
+	}
+	// The earlier caller deadline reaches the SDK, not verifyTimeout.
+	if !fake.verifyDeadline.Equal(callerDeadline) {
+		t.Errorf("deadline = %v, want the caller deadline %v", fake.verifyDeadline, callerDeadline)
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Errorf("verifyQueue() took %v, want the caller deadline to bound it", elapsed)
