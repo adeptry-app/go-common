@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,6 +94,28 @@ func TestPublish_AfterClose(t *testing.T) {
 	if len(fake.sent) != 0 {
 		t.Errorf("sent %d messages, want 0", len(fake.sent))
 	}
+}
+
+func TestPublish_ConcurrentWithClose(t *testing.T) {
+	fake := newFakeSQS()
+	p := newPublisher(fake, testConfig(time.Minute))
+
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			// A publish racing Close either lands or is rejected; nothing else.
+			if err := p.Publish(context.Background(), map[string]string{"k": "v"}); err != nil && !errors.Is(err, ErrPublisherClosed) {
+				t.Errorf("Publish() = %v, want nil or ErrPublisherClosed", err)
+			}
+		}()
+	}
+
+	if err := p.Close(); err != nil {
+		t.Errorf("Close() = %v, want nil", err)
+	}
+	wg.Wait()
 }
 
 // =============================================================================

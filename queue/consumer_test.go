@@ -574,6 +574,42 @@ func TestConsume_RequestsNoMoreThanFreeSlots(t *testing.T) {
 	}
 }
 
+func TestConsume_ReleasesSlotsAShortBatchDidNotUse(t *testing.T) {
+	fake := newFakeSQS()
+	for range 3 {
+		fake.batches <- []types.Message{testMessage("{}", 1)}
+	}
+	cfg := testConfig(time.Minute)
+	cfg.MaxNumberOfMessages = 2
+	cfg.ConsumerConcurrency = 2
+	c := newConsumer(fake, cfg, testLogger())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	handled := make(chan struct{}, 3)
+	done := make(chan error, 1)
+	go func() {
+		done <- c.Consume(ctx, func(context.Context, Delivery) error {
+			handled <- struct{}{}
+			return nil
+		})
+	}()
+
+	// Each receive reserves 2 slots and uses 1; leaking the spare exhausts the
+	// semaphore and the third batch never gets picked up.
+	for i := range 3 {
+		select {
+		case <-handled:
+		case <-ctx.Done():
+			t.Fatalf("only %d of 3 messages handled; unused slots were not released", i)
+		}
+	}
+
+	cancel()
+	<-done
+}
+
 func TestConsume_AlreadyConsuming(t *testing.T) {
 	fake := newFakeSQS()
 	c := newConsumer(fake, testConfig(), testLogger())
@@ -674,6 +710,11 @@ func TestConsumerErrorDefinitions(t *testing.T) {
 			wantMsg: "consumer is already consuming",
 		},
 		{
+			name:    "ErrNotConsuming",
+			err:     ErrNotConsuming,
+			wantMsg: "consumer has not started",
+		},
+		{
 			name:    "ErrReceiveFailed",
 			err:     ErrReceiveFailed,
 			wantMsg: "failed to receive messages",
@@ -707,6 +748,16 @@ func TestConsumerClose_Idempotent(t *testing.T) {
 	}
 }
 
+func TestConsumptionError_NeverStarted(t *testing.T) {
+	c := newConsumer(newFakeSQS(), testConfig(), testLogger())
+
+	// A constructed consumer whose Consume goroutine never ran must not read
+	// healthy on the worker's /health endpoint.
+	if err := c.ConsumptionError(); !errors.Is(err, ErrNotConsuming) {
+		t.Errorf("ConsumptionError() = %v, want ErrNotConsuming", err)
+	}
+}
+
 func TestConsumerConsume_AfterClose(t *testing.T) {
 	c := newConsumer(newFakeSQS(), testConfig(), testLogger())
 	if err := c.Close(); err != nil {
@@ -730,41 +781,47 @@ func TestConsumptionError(t *testing.T) {
 		wantErr  error
 	}{
 		{
+			// Nothing else reveals a worker whose Consume goroutine never ran.
 			name:     "before Consume runs",
 			consumer: &SQSConsumer{},
-			wantErr:  nil,
+			wantErr:  ErrNotConsuming,
 		},
 		{
 			name:     "while deliveries flow",
-			consumer: &SQSConsumer{consuming: true},
+			consumer: &SQSConsumer{started: true},
 			wantErr:  nil,
 		},
 		{
 			name: "while stuck retrying receives",
 			consumer: &SQSConsumer{
-				consuming: true,
-				runErr:    fmt.Errorf("receive failed after 7 attempt(s): %w", ErrReceiveFailed),
+				started: true,
+				runErr:  fmt.Errorf("receive failed after 7 attempt(s): %w", ErrReceiveFailed),
 			},
 			wantErr: ErrReceiveFailed,
 		},
 		{
 			name:     "after Close",
-			consumer: &SQSConsumer{closed: true, runErr: ErrConsumerClosed},
+			consumer: &SQSConsumer{closed: true, started: true, runErr: ErrConsumerClosed},
+			wantErr:  nil,
+		},
+		{
+			name:     "after Close before Consume ever ran",
+			consumer: &SQSConsumer{closed: true},
 			wantErr:  nil,
 		},
 		{
 			name:     "after Close while stuck retrying receives",
-			consumer: &SQSConsumer{closed: true, runErr: ErrReceiveFailed},
+			consumer: &SQSConsumer{closed: true, started: true, runErr: ErrReceiveFailed},
 			wantErr:  nil,
 		},
 		{
 			name:     "after context cancellation",
-			consumer: &SQSConsumer{runErr: context.Canceled},
+			consumer: &SQSConsumer{started: true, runErr: context.Canceled},
 			wantErr:  nil,
 		},
 		{
 			name:     "after context deadline",
-			consumer: &SQSConsumer{runErr: context.DeadlineExceeded},
+			consumer: &SQSConsumer{started: true, runErr: context.DeadlineExceeded},
 			wantErr:  nil,
 		},
 	}

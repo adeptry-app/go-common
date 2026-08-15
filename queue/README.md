@@ -120,7 +120,7 @@ occur when:
 - A deploy or Spot interruption cuts a handler short.
 
 The claim in the handler is what makes that safe: a second delivery of a row
-already `processing` finds it unclaimable and acks. `MessageID` supports
+already `processing` finds it unclaimable and deletes it. `MessageID` supports
 deduplication where more is needed.
 
 ## Retry Flow

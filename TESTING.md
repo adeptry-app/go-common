@@ -167,7 +167,7 @@ outside CI; in CI a missing Docker daemon fails.
 | Category | Coverage |
 | -------- | -------- |
 | HTTP Middleware | Path labels use the matched route; unmatched paths collapse to a sentinel |
-| Queue | Publish/consume counters, reconnects, queue depth |
+| Queue | Publish/consume counters, queue depth |
 
 **`middleware/auth_test.go`**
 

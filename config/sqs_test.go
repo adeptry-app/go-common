@@ -344,6 +344,7 @@ func TestNewSQSConfig_InvalidValuesPanic(t *testing.T) {
 		wantInPanic string
 	}{
 		{"queue url is not a url", "SQS_QUEUE_URL", "ai_requests", "QueueURL"},
+		{"whitespace-only region", "SQS_REGION", "   ", "Region"},
 		{"jitter above one", "SQS_RETRY_JITTER", "1.5", "RetryJitter"},
 		{"batch size above the SQS cap", "SQS_MAX_MESSAGES", "11", "MaxNumberOfMessages"},
 		{"long poll above the SQS cap", "SQS_WAIT_TIME_SECONDS", "21", "WaitTimeSeconds"},

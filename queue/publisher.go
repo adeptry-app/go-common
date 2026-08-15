@@ -129,7 +129,8 @@ func (p *SQSPublisher) MaxRetries() int {
 	return len(p.cfg.RetryDelays)
 }
 
-// Close rejects further publishes and waits for in-flight ones to finish.
+// Close rejects further publishes and waits for in-flight ones to finish, so a
+// publish whose context has no deadline can hold it open.
 // Idempotent: subsequent calls return nil.
 func (p *SQSPublisher) Close() error {
 	p.mu.Lock()

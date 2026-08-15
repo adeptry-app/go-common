@@ -110,7 +110,7 @@ func NewSQSConfigWithPrefix(prefix string) SQSConfig {
 	cfg := SQSConfig{
 		QueueURL:            env.required("SQS_QUEUE_URL"),
 		DLQURL:              env.required("SQS_DLQ_URL"),
-		Region:              env.required("SQS_REGION"),
+		Region:              strings.TrimSpace(env.required("SQS_REGION")),
 		Endpoint:            env.get("SQS_ENDPOINT", ""),
 		RetryDelays:         parseRetryDelays(env.get("SQS_RETRY_DELAYS", "")),
 		RetryJitter:         env.float("SQS_RETRY_JITTER", 0),

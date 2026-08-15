@@ -21,6 +21,7 @@ import (
 var (
 	ErrConsumerClosed   = errors.New("consumer is closed")
 	ErrAlreadyConsuming = errors.New("consumer is already consuming")
+	ErrNotConsuming     = errors.New("consumer has not started")
 	ErrReceiveFailed    = errors.New("failed to receive messages")
 )
 
@@ -57,6 +58,7 @@ type Consumer interface {
 type SQSConsumer struct {
 	mu        sync.Mutex
 	closed    bool
+	started   bool
 	consuming bool
 	runErr    error
 	runDone   chan struct{}
@@ -125,6 +127,9 @@ func (c *SQSConsumer) isClosed() bool {
 // to delete it, an error to ride the retry ladder, or a Permanent()-wrapped
 // error to quarantine it in the DLQ. If the context is cancelled while a
 // message is being handled, the message is made visible again immediately.
+//
+// Visibility is set at receive and never heartbeated, so a handler must finish
+// inside cfg.VisibilityTimeout or its message is redelivered while it runs.
 func (c *SQSConsumer) Consume(ctx context.Context, handler MessageHandler) (retErr error) {
 	c.mu.Lock()
 	if c.closed {
@@ -136,6 +141,7 @@ func (c *SQSConsumer) Consume(ctx context.Context, handler MessageHandler) (retE
 		return ErrAlreadyConsuming
 	}
 	c.consuming = true
+	c.started = true
 	c.runErr = nil
 	runDone := make(chan struct{})
 	c.runDone = runDone
@@ -200,6 +206,14 @@ func (c *SQSConsumer) Consume(ctx context.Context, handler MessageHandler) (retE
 		}
 		failures = 0
 		c.setRunErr(nil)
+
+		// More messages than slots would leave a handler goroutine blocked on
+		// the semaphore forever; the surplus returns when its visibility lapses.
+		if len(messages) > slots {
+			c.logger.Error("Received more messages than reserved",
+				"queue", c.name, "messages", len(messages), "slots", slots)
+			messages = messages[:slots]
+		}
 
 		release(sem, slots-len(messages))
 		for _, message := range messages {
@@ -463,6 +477,11 @@ func (c *SQSConsumer) ConsumptionError() error {
 
 	if c.closed {
 		return nil
+	}
+	// A worker whose Consume never ran has no connection to lose, so this is
+	// the only thing that reveals it.
+	if !c.started {
+		return ErrNotConsuming
 	}
 	if errors.Is(c.runErr, context.Canceled) || errors.Is(c.runErr, context.DeadlineExceeded) {
 		return nil

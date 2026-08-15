@@ -262,7 +262,9 @@ func TestIntegration_PermanentErrorToDLQ(t *testing.T) {
 	defer cancel()
 
 	var attempts atomic.Int32
+	consumeDone := make(chan struct{})
 	go func() {
+		defer close(consumeDone)
 		_ = consumer.Consume(ctx, func(context.Context, Delivery) error {
 			attempts.Add(1)
 			return Permanent(errors.New("malformed payload"))
@@ -286,10 +288,16 @@ func TestIntegration_PermanentErrorToDLQ(t *testing.T) {
 	if got := aws.ToString(quarantined.MessageAttributes[sourceIDAttribute].StringValue); got == "" {
 		t.Error("DLQ copy should carry the source message id for deduping")
 	}
+
+	// The DLQ copy lands before the source delete, so settle the consumer first
+	// or an invisible message reads the same as a deleted one.
+	cancel()
+	<-consumeDone
+
 	if got := attempts.Load(); got != 1 {
 		t.Errorf("handler attempts = %d, want 1 (no retries for permanent errors)", got)
 	}
-	if _, ok := receiveOne(t, client, cfg.QueueURL, 1); ok {
+	if _, ok := receiveOne(t, client, cfg.QueueURL, 3); ok {
 		t.Error("quarantined message should have been deleted from the source queue")
 	}
 }
