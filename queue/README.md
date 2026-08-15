@@ -1,8 +1,7 @@
 # queue
 
-RabbitMQ message publishing and consuming with automatic reconnection, retry
-support, dead letter queues, error classification, and optional publisher
-confirms.
+SQS message publishing and consuming with a per-failure retry ladder, DLQ
+quarantine, error classification, and stale row recovery.
 
 ## Publisher Usage
 
@@ -13,8 +12,7 @@ import (
     "github.com/adeptry-app/go-common/queue"
 )
 
-publisher, err := queue.NewRabbitMQPublisher(cfg,
-    queue.WithPublisherLogger(appLogger),       // optional, for reconnect logs
+publisher, err := queue.NewSQSPublisher(ctx, cfg,
     queue.WithPublisherMetrics(queueMetrics),   // optional Prometheus metrics
 )
 if err != nil {
@@ -22,15 +20,14 @@ if err != nil {
 }
 defer publisher.Close()
 
-// Publish message (CorrelationId is taken from ctx when present, see Tracing)
+// Publish a message (the correlation ID is taken from ctx, see Tracing)
 err = publisher.Publish(ctx, message)
 
-// Retry failed message (with headers for retry tracking)
-err = publisher.PublishToRetry(ctx, retryIndex, body, correlationID, headers)
-
-// Send to dead letter queue
-err = publisher.PublishToDLQ(ctx, body, correlationID)
+// The retry budget handlers measure the claimed row's attempt against
+maxRetries := publisher.MaxRetries()
 ```
+
+`ctx` bounds credential resolution only, not the lifetime of the publisher.
 
 ## Consumer Usage
 
@@ -40,10 +37,9 @@ import (
     "log"
 
     "github.com/adeptry-app/go-common/queue"
-    amqp "github.com/rabbitmq/amqp091-go"
 )
 
-consumer, err := queue.NewRabbitMQConsumer(cfg, publisher, logger,
+consumer, err := queue.NewSQSConsumer(ctx, cfg, logger,
     queue.WithConsumerMetrics(queueMetrics),    // optional Prometheus metrics
 )
 if err != nil {
@@ -52,21 +48,23 @@ if err != nil {
 defer consumer.Close()
 
 // Consume messages (blocks until context cancelled or Close is called)
-err = consumer.Consume(ctx, func(c context.Context, d amqp.Delivery) error {
-    // Return nil to ACK.
-    // Return an error to trigger the retry ladder.
-    // Return queue.Permanent(err) to skip retries and go straight to the DLQ.
+err = consumer.Consume(ctx, func(c context.Context, d queue.Delivery) error {
+    // Return nil to delete the message.
+    // Return queue.WithAttempt(row.Attempt, err) to ride the retry ladder.
+    // Return queue.Permanent(err) to quarantine it in the DLQ.
     return nil
 })
-
-// Get retry count from message headers
-retryCount := queue.GetRetryCount(delivery)
-
-// Inside a handler: will this delivery retry on a transient error, or is
-// this the final attempt before the DLQ? Uses the same predicate the
-// consumer applies after the handler returns.
-finalAttempt := !queue.WillRetry(delivery, publisher.MaxRetries())
 ```
+
+`Delivery` is transport-neutral: AWS SDK types never leave this package.
+
+| Field | Meaning |
+| ----- | ------- |
+| `Body` | Raw message payload |
+| `MessageID` | Queue message id, carried onto the DLQ copy |
+| `CorrelationID` | Links back to the originating request |
+| `ReceiveCount` | Every receive, including ones a deploy cut short |
+| `ReceivedAt` | When this delivery arrived |
 
 ## Stale Row Recovery
 
@@ -95,15 +93,18 @@ alongside the claim. Pair it with an atomic claim in the handler: the sweeper
 guarantees at-least-once recovery, the claim keeps duplicate deliveries from
 doing the work twice. Tune with `config.SweeperConfig`.
 
+Note the sweeper charges an attempt when it re-publishes, and the claim
+charges another, so a recovered row rides a correspondingly shorter ladder.
+A queue outage also costs an attempt: a failed publish is only logged, and the
+row waits a whole processing-age window for the next pass.
+
 ## Features
 
-- Automatic exchange and queue declaration
 - Stale row recovery via `StaleSweeper`
-- Automatic reconnection with exponential backoff (publisher and consumer)
-- Configurable retry delays with TTL-based routing and optional jitter
-- Dead letter queue for permanent failures
+- Retry ladder applied as a per-failure visibility timeout, with optional jitter
+- DLQ quarantine for permanent failures and spent attempt budgets
 - Permanent error classification (`queue.Permanent` / `queue.ErrPermanent`)
-- Optional publisher confirms
+- Ladder indexing by business attempt (`queue.WithAttempt`)
 - Optional concurrent message processing
 - Correlation ID propagation between HTTP requests and queue messages
 - Optional Prometheus metrics (see the `metrics` package)
@@ -114,237 +115,190 @@ doing the work twice. Tune with `config.SweeperConfig`.
 Delivery is **at-least-once**. Handlers must be idempotent. Duplicates can
 occur when:
 
-- A handler succeeds but the ACK fails (broker redelivers).
-- A message is republished to a retry queue but the ACK of the original
-  fails (both copies eventually arrive).
-- The consumer reconnects while messages were in flight.
+- A handler succeeds but the delete fails (SQS redelivers).
+- A worker dies between receiving and settling a message.
+- A deploy or Spot interruption cuts a handler short.
 
-The `redelivered` flag and `MessageId` on the delivery can support
-deduplication where needed.
+The claim in the handler is what makes that safe: a second delivery of a row
+already `processing` finds it unclaimable and deletes it. `MessageID` supports
+deduplication where more is needed.
 
 ## Retry Flow
 
-1. Message fails processing with an ordinary error: the consumer republishes
-   it to the next retry queue with an incremented `x-retry-count` header and
-   ACKs the original.
-2. After the queue TTL expires, the message returns to the main queue.
-3. When `retryCount >= MaxRetries()`, the message is NACKed and routes to the
-   DLQ.
-4. Errors matching `queue.ErrPermanent` skip the ladder entirely and route
-   straight to the DLQ.
+1. A handler that fails transiently returns `queue.WithAttempt(attempt, err)`,
+   where `attempt` is the business attempt its own claim charged in Postgres.
+2. The consumer calls `ChangeMessageVisibility` with `RetryDelays[attempt-1]`,
+   so the message returns after that ladder step. No retry queues exist.
+3. When the row's attempt budget is spent, the handler fails the row and
+   returns `queue.Permanent(err)`; the consumer copies the body to the DLQ and
+   deletes the source. Exhaustion is a business decision with a database record
+   behind it, never a side effect of receive counting.
+4. Errors matching `queue.ErrPermanent` skip the ladder entirely and are
+   quarantined the same way.
 5. If the consume context is cancelled while a message is being handled
-   (shutdown), the message is requeued without consuming a retry attempt.
+   (shutdown), the message is made visible again immediately. That costs a
+   receive, not a ladder step - though it may well have cost a business
+   attempt, which the sweeper is what recovers.
 
-Handlers that need to record the upcoming routing decision (e.g. "will
-retry" vs "final attempt") should use `queue.WillRetry(delivery,
-publisher.MaxRetries())` instead of re-deriving it from the retry count - it
-is the same predicate the consumer applies, so the two cannot drift. A
-handler returning a `queue.Permanent` error always goes to the DLQ
-regardless of what `WillRetry` reported.
+### Why the ladder is not indexed by `ReceiveCount`
+
+SQS counts every receive, including one a deploy cut short before the handler
+did anything, and the count is not resettable. Indexing the ladder by it would
+let two rolling deploys push a message straight to the last rung. The business
+attempt lives in Postgres, is charged by the claim, and is the only thing the
+ladder is indexed by.
+
+`ReceiveCount` has exactly one narrow use: a failure that happened *before* the
+row was claimed has no business attempt to index by, and still has to back off
+rather than spin. Such a failure can never spend a retry from the budget,
+because the budget is counted in Postgres and a pre-claim failure never
+reached it.
+
+The queue's own `maxReceiveCount` redrive policy stays as a backstop that no
+correct path reaches: hitting it means the consumer never settled the message
+at all (a crash loop, an OOM kill, a task that died between receive and
+settle), and the row behind it is still `retrying` for the sweeper to recover.
 
 ### Panics
 
 A handler panic does not crash the worker: the consumer recovers it, logs
 the stack at error level, and treats it as a transient handler error that
 rides the retry ladder. A deterministically panicking message therefore
-reaches the DLQ after the configured retries instead of crash-looping the
+reaches the DLQ once the row's budget is spent instead of crash-looping the
 process. Mark input-dependent failures with `queue.Permanent` in the handler
 when retrying is pointless.
 
 ### Retry Jitter
 
-With `RetryJitter` set (0 to 1), each retry message gets a per-message TTL
-randomly shortened by up to that fraction (e.g. jitter 0.2 on a 5m delay
-yields TTLs between 4m and 5m). This spreads out retries of messages that
-failed together. The queue-level TTL stays the upper bound, so existing
-topologies are unaffected. Note RabbitMQ only expires messages at the queue
-head, so under bursts a message may wait for messages ahead of it.
+With `RetryJitter` set (0 to 1), each ladder step is randomly shortened by up
+to that fraction (e.g. jitter 0.2 on a 5m delay yields delays between 4m and
+5m). This spreads out retries of messages that failed together. Jitter only
+ever shortens, so it cannot push a delay past the ceiling below.
 
-## Reconnection
+## Visibility Timeouts
 
-Both publisher and consumer automatically re-establish dropped connections
-and channels with exponential backoff (defaults: 1s initial, 30s cap, plus
-jitter, unlimited attempts), re-declaring topology on success. Disable with
-`DisableReconnect` / `RABBITMQ_RECONNECT=false` to restore the old fail-fast
-behavior.
+SQS caps a visibility timeout at 12h **measured from the `ReceiveMessage`
+call**, not from the `ChangeMessageVisibility` call, and rejects an
+over-budget request with HTTP 400 rather than clamping it. Two defences:
 
-- Publishes issued while disconnected fail fast with `ErrPublishFailed`;
-  callers decide whether to retry.
-- `Consume` resumes delivery after reconnecting and then only returns on
-  context cancellation, `Close()`, or when `ReconnectMaxAttempts` is
-  exceeded (`ErrReconnectFailed`). With the default `0` it never gives up, so
-  register `ConsumptionError` on the health endpoint (see below) - it is the
-  only way a stuck consumer becomes visible.
-- The initial connection in the constructors remains fail-fast so
-  misconfiguration is caught at startup. Wrap the constructor in a retry
-  loop if you need patience at boot.
-- AMQP heartbeats default to 10s (`RABBITMQ_HEARTBEAT`) so dead peers are
-  detected even on quiet connections.
+- `config.NewSQSConfig` rejects any ladder step above 11h, leaving an hour of
+  headroom for handler runtime.
+- The consumer clamps every visibility change to what is left of the ceiling.
 
-## Publisher Confirms
+A visibility change does not persist: SQS reverts to the queue's configured
+timeout on the next receive. That is correct here, since each ladder step is a
+fresh receive that sets its own delay, but it means the queue-level
+`VisibilityTimeout` must still exceed the handler timeout on its own. The
+consumer passes `VisibilityTimeout` on every receive, so a queue created out of
+band cannot silently fall back to the SQS default of 30s and redeliver a job
+that is still running.
 
-With `PublisherConfirms` enabled, `Publish` blocks until the broker confirms
-the message was received (bounded by ctx) and returns
-`ErrPublishNotConfirmed` on a broker NACK. This closes the window where a
-broker crash between channel-accept and persist silently loses a message, at
-the cost of one broker round-trip per publish. Off by default.
-
-## Concurrency and Prefetch
+## Concurrency
 
 `Consume` processes messages sequentially by default. Set
-`ConsumerConcurrency` (and a matching `PrefetchCount`) to process N messages
-in parallel; effective parallelism is `min(ConsumerConcurrency,
-PrefetchCount)`.
-
-For long-running handlers keep `PrefetchCount` equal to
-`ConsumerConcurrency`: prefetched messages sit unacknowledged on this
-consumer and are invisible to others until processed.
+`ConsumerConcurrency` to process N messages in parallel. A receive never asks
+for more messages than there are free handler slots, and `MaxNumberOfMessages`
+caps the batch size (SQS allows at most 10).
 
 ## Graceful Shutdown
 
-- Cancelling the consume context stops fetching; in-flight handlers run to
-  completion (handlers should honor ctx for long work) and their messages
-  are requeued without burning a retry attempt if they fail.
-- `Close()` on the consumer blocks until in-flight handlers finish and the
-  connection is released. Never call it from inside a handler (it would
-  deadlock waiting for that handler); cancel the consume context instead.
-- Shut down the consumer before the publisher: in-flight handlers may still
-  publish to retry queues.
+- Cancelling the consume context stops receiving; in-flight handlers run to
+  completion (handlers should honor ctx for long work) and their messages are
+  made visible again immediately if they fail.
+- Settling runs on a detached context, so a message whose handler succeeded
+  during shutdown is still deleted rather than redelivered.
+- `Close()` on the consumer blocks until in-flight handlers finish. Never call
+  it from inside a handler (it would deadlock waiting for that handler); cancel
+  the consume context instead.
+- Shut down the consumer before the publisher.
 
 ## Tracing
 
-`Publish` uses the correlation ID from the context
-(`logger.GetCorrelationID`) as the message `CorrelationId` when present, so
-messages link back to the originating HTTP request. The consumer puts the
-delivery's correlation ID back into the handler context, so handlers using
-`logger.FromContext` log it automatically. Retries preserve it.
-
-## Connection Ownership
-
-Both publisher and consumer own their own RabbitMQ connections.
-`Connection()` returns the current connection for read-only purposes; the
-pointer changes after a reconnect, so health checks must use the provider
-form:
-
-```go
-healthAgg.Register(health.NewRabbitMQCheckerWithProvider(publisher.Connection))
-```
-
-**Do not call `conn.Close()` directly** - use `publisher.Close()` or
-`consumer.Close()` instead.
+SQS has no correlation-id field, so `Publish` carries the context correlation
+ID (`logger.GetCorrelationID`) as a `correlationId` message attribute when
+present, and the consumer puts it back into the handler context, so handlers
+using `logger.FromContext` log it automatically. Retries preserve it, and the
+DLQ copy carries it too.
 
 ## Consumer Liveness
 
-The connection check stays green both when `Consume` has given up and when it
-is looping on failed setup, so a worker must also register the consumption
-state:
+A consumer that is receiving nothing has no connection to lose, so nothing
+reveals it except the consumption state:
 
 ```go
 healthAgg.Register(health.NewConsumerChecker(consumer.ConsumptionError))
 ```
 
 `ConsumptionError` is nil while deliveries flow and after a clean `Close()` or
-context cancellation. It returns the terminal error once `Consume` gives up,
-and the current setup failure while it is retrying - which is the only signal
-under the default `ReconnectMaxAttempts: 0`, where `Consume` never returns.
-
-## DLQ Monitoring
-
-Expose the DLQ depth on the health endpoint (and optionally as a Prometheus
-gauge via `metrics.QueueMetrics.SetQueueDepth`):
-
-```go
-healthAgg.Register(
-    health.NewQueueDepthChecker(publisher.Connection, publisher.DLQName(), 0))
-```
+context cancellation. Failed receives are retried with backoff indefinitely, so
+`Consume` never returns for them - the retry state is the only signal.
 
 ## Configuration
 
 ```go
-cfg := config.RabbitMQConfig{
-    Host:        "localhost",
-    Port:        5672,
-    User:        "guest",
-    Password:    "guest",
-    TLS:         false,            // Set to true for amqps:// (Amazon MQ, production)
-    Exchange:    "messaging",
-    Queue:       "contact_messages",
+cfg := config.SQSConfig{
+    QueueURL:    "https://sqs.eu-west-1.amazonaws.com/123456789012/emails",
+    DLQURL:      "https://sqs.eu-west-1.amazonaws.com/123456789012/emails_dlq",
+    Region:      "eu-west-1",
+    Endpoint:    "",               // LocalStack only, development only
     RetryDelays: []time.Duration{1*time.Minute, 5*time.Minute, 30*time.Minute},
     RetryJitter: 0.2,              // optional, 0 disables
 
-    PublisherConfirms: false,      // optional broker-confirmed publishes
-
-    // Reconnection (zero values mean: enabled, unlimited, 1s initial, 30s cap)
-    DisableReconnect:      false,
-    ReconnectMaxAttempts:  0,
-    ReconnectInitialDelay: time.Second,
-    ReconnectMaxDelay:     30 * time.Second,
-
-    // Consumer-specific (optional)
-    PrefetchCount:       1,             // QoS prefetch count
-    ConsumerTag:         "my-consumer", // Unique consumer identifier
+    MaxNumberOfMessages: 1,             // receive batch size, 1-10
+    WaitTimeSeconds:     20,            // long poll, 0-20
+    VisibilityTimeout:   90*time.Second, // must exceed the handler timeout
     ConsumerConcurrency: 1,             // parallel handlers
 }
 ```
+
+Credentials come from the default AWS chain, so an ECS task role needs no
+configuration of its own.
 
 ## Environment Variables
 
 | Variable | Required | Default | Description |
 | -------- | -------- | ------- | ----------- |
-| `RABBITMQ_HOST` | Yes | - | RabbitMQ hostname |
-| `RABBITMQ_PORT` | Yes | - | RabbitMQ port |
-| `RABBITMQ_USER` | Yes | - | Username |
-| `RABBITMQ_PASSWORD` | Yes | - | Password |
-| `RABBITMQ_TLS` | No | `false` | Use TLS (amqps://) connection |
-| `RABBITMQ_EXCHANGE` | No | `contact_messages` | Exchange name |
-| `RABBITMQ_QUEUE` | No | `contact_messages` | Queue name |
-| `RABBITMQ_RETRY_DELAYS` | No | `1m,5m,30m,2h,12h` | Comma-separated durations |
-| `RABBITMQ_RETRY_JITTER` | No | `0` | Retry delay jitter fraction (0-1) |
-| `RABBITMQ_HEARTBEAT` | No | `10s` | AMQP heartbeat interval |
-| `RABBITMQ_PUBLISHER_CONFIRMS` | No | `false` | Enable publisher confirms |
-| `RABBITMQ_RECONNECT` | No | `true` | Automatic reconnection |
-| `RABBITMQ_RECONNECT_MAX_ATTEMPTS` | No | `0` | Reconnect attempt limit (0 = unlimited) |
-| `RABBITMQ_RECONNECT_INITIAL_DELAY` | No | `1s` | First reconnect backoff delay |
-| `RABBITMQ_RECONNECT_MAX_DELAY` | No | `30s` | Reconnect backoff cap |
-| `RABBITMQ_PREFETCH_COUNT` | No | `1` | Consumer QoS prefetch |
-| `RABBITMQ_CONSUMER_TAG` | No | `""` | Consumer identifier |
-| `RABBITMQ_CONSUMER_CONCURRENCY` | No | `1` | Parallel message handlers |
+| `SQS_QUEUE_URL` | Yes | - | Main queue URL |
+| `SQS_DLQ_URL` | Yes | - | Dead letter queue URL |
+| `SQS_REGION` | Yes | - | AWS region |
+| `SQS_ENDPOINT` | No | `""` | LocalStack endpoint; rejected unless `ENVIRONMENT=development` |
+| `SQS_RETRY_DELAYS` | No | `1m,5m,30m,2h,11h` | Comma-separated durations, each at most 11h |
+| `SQS_RETRY_JITTER` | No | `0` | Retry delay jitter fraction (0-1) |
+| `SQS_MAX_MESSAGES` | No | `1` | Receive batch size (1-10) |
+| `SQS_WAIT_TIME_SECONDS` | No | `20` | Long poll wait (0-20) |
+| `SQS_VISIBILITY_TIMEOUT` | No | `30s` | Receive visibility timeout (max 12h) |
+| `SQS_CONSUMER_CONCURRENCY` | No | `1` | Parallel message handlers |
 
 ### Multiple Queues per Service
 
-`config.NewRabbitMQConfigWithPrefix("AI_")` reads `AI_RABBITMQ_*` variables,
-falling back to the un-prefixed names, so two queues with different retry
-ladders can coexist in one service:
+`config.NewSQSConfigWithPrefix("AI_")` reads `AI_SQS_*` variables, falling back
+to the un-prefixed names, so two queues with different retry ladders can
+coexist in one service:
 
 ```text
-RABBITMQ_HOST=...                  # shared
-RABBITMQ_USER=...                  # shared
-RABBITMQ_QUEUE=contact_messages    # queue 1
-AI_RABBITMQ_QUEUE=ai_jobs          # queue 2
-AI_RABBITMQ_RETRY_DELAYS=5s,15s,1m # queue 2 retry ladder
+SQS_REGION=...                     # shared
+SQS_ENDPOINT=...                   # shared
+SQS_QUEUE_URL=.../emails           # queue 1
+AI_SQS_QUEUE_URL=.../ai_requests   # queue 2
+AI_SQS_RETRY_DELAYS=30s,2m,10m     # queue 2 retry ladder
 ```
 
 ## Queue Infrastructure
 
-Created automatically by `NewRabbitMQPublisher` (and re-declared on every
-reconnect and consumer setup):
+Queues are created by Terraform in deployed environments and by a LocalStack
+init script locally. Neither the publisher nor the consumer declares anything
+at startup. Each queue pair is:
 
-- **Main queue** (`contact_messages`) - Primary message queue
-- **Retry queues** (`contact_messages_retry_0`, `_1`, etc.) - TTL-based delays
-- **DLQ** (`contact_messages_dlq`) - Permanent failures
-- **Exchanges** - Direct exchanges for routing
+- **Main queue** (`emails`) - with a redrive policy to the DLQ as a backstop
+- **DLQ** (`emails_dlq`) - permanent failures and quarantined bodies
 
-All queues and exchanges are durable and messages are published persistent.
-
-**Changing `RETRY_DELAYS` against an existing topology**: RabbitMQ rejects
-re-declaring a queue with different arguments (`PRECONDITION_FAILED`).
-Delete the old retry queues (or use a new queue name) before changing the
-delay ladder of a deployed queue.
+The consumer quarantines explicitly (send to the DLQ, then delete from the
+source), so a message reaching the DLQ through the redrive policy instead means
+the consumer never settled it at all.
 
 ## Testing
 
-Integration tests in `integration_test.go` cover publish/consume, the retry
-ladder, DLQ routing, permanent errors, reconnection, confirms, shutdown
-semantics, and concurrency against a real RabbitMQ in Docker
-(testcontainers-go). They are skipped with `-short` or when Docker is
-unavailable.
+Integration tests in `integration_test.go` cover publish/consume, DLQ
+quarantine, ladder indexing, shutdown semantics and concurrency against real
+SQS in LocalStack (testcontainers-go). They are skipped with `-short`, and when
+Docker is unavailable outside CI - in CI a missing Docker daemon fails.

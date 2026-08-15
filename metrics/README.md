@@ -45,17 +45,17 @@ queueMetrics := metrics.NewQueueMetrics(metrics.Config{
     Namespace:   "adeptry",
 })
 
-publisher, err := queue.NewRabbitMQPublisher(cfg, queue.WithPublisherMetrics(queueMetrics))
+publisher, err := queue.NewSQSPublisher(ctx, cfg, queue.WithPublisherMetrics(queueMetrics))
 if err != nil {
     log.Fatal(err)
 }
-consumer, err := queue.NewRabbitMQConsumer(cfg, publisher, logger, queue.WithConsumerMetrics(queueMetrics))
+consumer, err := queue.NewSQSConsumer(ctx, cfg, logger, queue.WithConsumerMetrics(queueMetrics))
 if err != nil {
     log.Fatal(err)
 }
 
 // Optional: poll and expose DLQ depth
-queueMetrics.SetQueueDepth(publisher.DLQName(), float64(depth))
+queueMetrics.SetQueueDepth("emails_dlq", float64(depth))
 ```
 
 - `queue_publishes_total{queue,status}` - Publish attempts (success/error)
@@ -63,5 +63,4 @@ queueMetrics.SetQueueDepth(publisher.DLQName(), float64(depth))
 - `queue_consumes_total{queue,outcome}` - Processed messages (success,
   retry, dlq, requeued)
 - `queue_consume_duration_seconds{queue}` - Handler execution time histogram
-- `queue_reconnects_total{component}` - Reconnect cycles (publisher/consumer)
 - `queue_depth{queue}` - Gauge for queue depth (set via `SetQueueDepth`)

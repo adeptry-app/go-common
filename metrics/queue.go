@@ -15,7 +15,6 @@ type QueueMetrics struct {
 	PublishDuration *prometheus.HistogramVec
 	ConsumesTotal   *prometheus.CounterVec
 	ConsumeDuration *prometheus.HistogramVec
-	ReconnectsTotal *prometheus.CounterVec
 	QueueDepth      *prometheus.GaugeVec
 }
 
@@ -71,16 +70,6 @@ func NewQueueMetrics(cfg Config) *QueueMetrics {
 			[]string{"queue"},
 		),
 
-		ReconnectsTotal: promauto.NewCounterVec(
-			prometheus.CounterOpts{
-				Namespace: namespace,
-				Subsystem: cfg.ServiceName,
-				Name:      "queue_reconnects_total",
-				Help:      "Total number of RabbitMQ reconnect cycles",
-			},
-			[]string{"component"},
-		),
-
 		QueueDepth: promauto.NewGaugeVec(
 			prometheus.GaugeOpts{
 				Namespace: namespace,
@@ -107,11 +96,6 @@ func (q *QueueMetrics) RecordPublish(queue string, success bool, duration time.D
 func (q *QueueMetrics) RecordConsume(queue, outcome string, duration time.Duration) {
 	q.ConsumesTotal.WithLabelValues(queue, outcome).Inc()
 	q.ConsumeDuration.WithLabelValues(queue).Observe(duration.Seconds())
-}
-
-// RecordReconnect records the start of a reconnect cycle.
-func (q *QueueMetrics) RecordReconnect(component string) {
-	q.ReconnectsTotal.WithLabelValues(component).Inc()
 }
 
 // SetQueueDepth sets the current depth of a queue (e.g. polled DLQ depth).

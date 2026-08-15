@@ -22,7 +22,7 @@ intVal := config.GetEnvInt("PORT", 8080)
 
 ### Boolean values
 
-`GetEnvBool` and the `RABBITMQ_*` boolean variables accept case-insensitive
+`GetEnvBool` accepts case-insensitive
 `true`, `false`, `1`, or `0` (surrounding whitespace ignored). Empty or
 whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 `t`) panics at startup instead of silently reading as false.
@@ -35,7 +35,7 @@ whitespace-only values keep the default. Anything else (e.g. `yes`, `on`,
 - `JWTConfig` - JWT signing keys, access audience, expiration (issuer only)
 - `RedisConfig` - Redis connection settings
 - `S3Config` - MinIO/S3 storage settings
-- `RabbitMQConfig` - RabbitMQ connection and queue settings
+- `SQSConfig` - SQS queue, retry ladder and consumer settings
 - `SweeperConfig` - stale-row sweeper tuning for queue workers
 - `CookieConfig` - httpOnly cookie settings for authentication
 
@@ -92,21 +92,24 @@ See the `jwt` package README for the key format and rotation order.
 - `S3_USE_SSL` - Optional (default false)
 - Bucket names are not here; the consuming service configures its own
 
-### RabbitMQConfig
+### SQSConfig
 
-- `RABBITMQ_HOST`, `RABBITMQ_PORT`, `RABBITMQ_USER`, `RABBITMQ_PASSWORD` - Required
-- Optional: `RABBITMQ_TLS`, `RABBITMQ_EXCHANGE`, `RABBITMQ_QUEUE`,
-  `RABBITMQ_RETRY_DELAYS`, `RABBITMQ_RETRY_JITTER`, `RABBITMQ_HEARTBEAT`,
-  `RABBITMQ_PUBLISHER_CONFIRMS`, `RABBITMQ_RECONNECT`,
-  `RABBITMQ_RECONNECT_MAX_ATTEMPTS`, `RABBITMQ_RECONNECT_INITIAL_DELAY`,
-  `RABBITMQ_RECONNECT_MAX_DELAY`, `RABBITMQ_PREFETCH_COUNT`,
-  `RABBITMQ_CONSUMER_TAG`, `RABBITMQ_CONSUMER_CONCURRENCY`
+- `SQS_QUEUE_URL`, `SQS_DLQ_URL`, `SQS_REGION` - Required
+- Optional: `SQS_ENDPOINT`, `SQS_RETRY_DELAYS`, `SQS_RETRY_JITTER`,
+  `SQS_MAX_MESSAGES`, `SQS_WAIT_TIME_SECONDS`, `SQS_VISIBILITY_TIMEOUT`,
+  `SQS_CONSUMER_CONCURRENCY`
+
+Credentials come from the default AWS chain, not from configuration.
+`SQS_ENDPOINT` is a LocalStack override and panics unless `ENVIRONMENT` is
+`development`, so it cannot redirect deployed traffic away from AWS. Every
+`SQS_RETRY_DELAYS` step must be at most 11h, an hour inside the SQS visibility
+ceiling.
 
 See the `queue` package README for defaults and semantics.
 
-`NewRabbitMQConfigWithPrefix(prefix)` reads each variable as
-`<prefix>RABBITMQ_*` with fallback to the un-prefixed name, allowing one
-service to configure multiple queues independently.
+`NewSQSConfigWithPrefix(prefix)` reads each variable as `<prefix>SQS_*` with
+fallback to the un-prefixed name, allowing one service to configure multiple
+queues independently.
 
 ### SweeperConfig
 
@@ -118,18 +121,19 @@ service to configure multiple queues independently.
 - `SWEEPER_MAX_ATTEMPTS` - Attempt budget before a stale row is failed
   (default `4`)
 
-`SWEEPER_PROCESSING_AGE` must exceed the longest `RABBITMQ_RETRY_DELAYS` rung
-plus the worker's job timeout, or the sweeper double-publishes work that is
-still legitimately waiting. That floor is deployment-specific, so
-`NewSweeperConfig` takes both and panics on an override at or under it:
+`SWEEPER_PROCESSING_AGE` must exceed the longest `SQS_RETRY_DELAYS` rung plus
+the worker's job timeout, or the sweeper double-publishes work that is still
+legitimately waiting. That floor is deployment-specific, so `NewSweeperConfig`
+takes both and panics on an override at or under it:
 
 ```go
-cfg.Sweeper = config.NewSweeperConfig(cfg.RabbitMQ.RetryDelays, cfg.JobTimeout)
+cfg.Sweeper = config.NewSweeperConfig(cfg.SQS.RetryDelays, cfg.JobTimeout)
 ```
 
-Recovery runs on the same timescale as the ladder: a 12h last rung means a dead
-worker's row is also recovered around 12h later. Shorten the ladder if that is
-too slow. See `queue.StaleSweeper` for the loop that consumes this config.
+Recovery runs on the same timescale as the ladder: an 11h last rung means a
+dead worker's row is also recovered around 11h later. Shorten the ladder if
+that is too slow. See `queue.StaleSweeper` for the loop that consumes this
+config.
 
 ### CookieConfig
 

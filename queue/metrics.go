@@ -4,16 +4,10 @@ import "time"
 
 // Consume outcomes reported to MetricsRecorder.RecordConsume.
 const (
-	OutcomeSuccess  = "success"  // handler succeeded, message ACKed
-	OutcomeRetry    = "retry"    // handler failed, message sent to a retry queue
-	OutcomeDLQ      = "dlq"      // message sent to the DLQ (retries exhausted or permanent error)
-	OutcomeRequeued = "requeued" // message requeued without consuming a retry attempt (shutdown)
-)
-
-// Components reported to MetricsRecorder.RecordReconnect.
-const (
-	ComponentPublisher = "publisher"
-	ComponentConsumer  = "consumer"
+	OutcomeSuccess  = "success"  // handler succeeded, message deleted
+	OutcomeRetry    = "retry"    // handler failed, message hidden for a ladder step
+	OutcomeDLQ      = "dlq"      // message quarantined in the DLQ (permanent error)
+	OutcomeRequeued = "requeued" // message made visible again without a ladder step (shutdown)
 )
 
 // MetricsRecorder receives queue events for instrumentation. Implementations
@@ -23,15 +17,12 @@ const (
 // (metrics.QueueMetrics); pass it via WithPublisherMetrics /
 // WithConsumerMetrics. When no recorder is configured, events are discarded.
 type MetricsRecorder interface {
-	// RecordPublish is called after every publish attempt. queue is the
-	// routing target (main queue, retry queue, or DLQ name).
+	// RecordPublish is called after every publish attempt. queue is the name
+	// parsed from the queue URL.
 	RecordPublish(queue string, success bool, duration time.Duration)
 	// RecordConsume is called after a delivery is processed. outcome is one
 	// of the Outcome* constants; duration is the handler execution time.
 	RecordConsume(queue string, outcome string, duration time.Duration)
-	// RecordReconnect is called when a dropped connection is detected and a
-	// reconnect cycle starts. component is "publisher" or "consumer".
-	RecordReconnect(component string)
 }
 
 // noopMetrics is the default MetricsRecorder that discards all events.
@@ -39,4 +30,3 @@ type noopMetrics struct{}
 
 func (noopMetrics) RecordPublish(string, bool, time.Duration)   {}
 func (noopMetrics) RecordConsume(string, string, time.Duration) {}
-func (noopMetrics) RecordReconnect(string)                      {}

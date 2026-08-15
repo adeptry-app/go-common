@@ -37,3 +37,35 @@ func (e *permanentError) Unwrap() error { return e.err }
 
 // Is reports true for ErrPermanent so errors.Is(err, ErrPermanent) matches.
 func (e *permanentError) Is(target error) bool { return target == ErrPermanent }
+
+// WithAttempt wraps a transient error with the business attempt it failed on,
+// which the consumer uses as the retry-ladder index. Returns nil if err is nil.
+//
+//	return queue.WithAttempt(claimed.Attempt, err)
+//
+// The attempt comes from the claim (the row's own counter), never from the
+// delivery's receive count, so an operational redelivery cannot skip a rung.
+func WithAttempt(attempt int, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &attemptError{attempt: attempt, err: err}
+}
+
+// AttemptOf reports the business attempt recorded by WithAttempt, if any.
+func AttemptOf(err error) (int, bool) {
+	var attemptErr *attemptError
+	if errors.As(err, &attemptErr) {
+		return attemptErr.attempt, true
+	}
+	return 0, false
+}
+
+type attemptError struct {
+	attempt int
+	err     error
+}
+
+func (e *attemptError) Error() string { return e.err.Error() }
+
+func (e *attemptError) Unwrap() error { return e.err }
