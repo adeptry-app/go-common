@@ -69,12 +69,12 @@ go test -v ./health/
 | Constructor | NewPgxChecker, Name |
 | Error Handling | Nil pool; ping failure reports unhealthy with latency |
 
-**`health/rabbitmq_test.go`**
+**`health/consumer_test.go`**
 
 | Category | Coverage |
 | -------- | -------- |
-| Constructor | NewRabbitMQChecker, provider variant, QueueDepthChecker, Name |
-| Error Handling | Nil connection, nil provider |
+| Constructor | NewConsumerChecker, Name |
+| Error Handling | Nil provider, stopped consumption |
 
 **`health/redis_test.go`**
 
@@ -94,21 +94,23 @@ go test -v ./health/
 
 | Category | Coverage |
 | -------- | -------- |
-| Helper Methods | RetryQueues, DLQName, DLXName, MaxRetries |
+| Publish | Body and correlation attribute, context correlation ID, marshal and send failures, publish after close |
+| Helper Methods | MaxRetries, queueName parsing |
 | Error Definitions | All publisher errors |
-| Validation | PublishToRetry bounds checking |
 | Close | Idempotent close behavior |
-| Jitter | jitteredExpiration bounds, disabled cases, clamping |
 | Interface | Publisher interface compliance |
 
 **`queue/consumer_test.go`**
 
 | Category | Coverage |
 | -------- | -------- |
-| GetRetryCount | Header parsing, incl. int8/int16/negative |
-| WillRetry | Retry-vs-DLQ predicate, boundary cases |
+| Delivery | Attribute parsing, receive count, missing attributes |
+| Retry Ladder | Indexed by business attempt not receive count, clamps to ladder and to the visibility ceiling |
+| Jitter | Bounds, disabled cases, clamping |
+| Backoff | Exponential growth, cap, jitter bounds |
 | Panic Recovery | invokeHandler converts panics, passes results through |
-| Constants | RetryCountHeader value |
+| Settling | Success deletes, permanent quarantines, failed DLQ send keeps the message, transient hides for a ladder step, shutdown returns it immediately |
+| Consume | Dispatch and drain, slot-bounded receives, ErrAlreadyConsuming, failed receives surface on ConsumptionError |
 | Error Definitions | All consumer errors |
 | Close | Idempotent close behavior |
 | Interface | Consumer interface compliance |
@@ -118,39 +120,29 @@ go test -v ./health/
 | Category | Coverage |
 | -------- | -------- |
 | Permanent | nil handling, errors.Is matching, wrapping, Unwrap |
+| WithAttempt | nil handling, message preserved, AttemptOf through wrapping, not permanent |
 
-**`queue/connection_test.go`**
-
-| Category | Coverage |
-| -------- | -------- |
-| Backoff | Exponential growth, cap, jitter bounds, defaults |
-| Helpers | closeError formatting |
-
-**`queue/integration_test.go`** (RabbitMQ via testcontainers)
+**`queue/integration_test.go`** (SQS via LocalStack in testcontainers)
 
 | Category | Coverage |
 | -------- | -------- |
-| Happy Path | Publish/consume, correlation ID propagation |
-| Retry/DLQ | Retry ladder counts, max retries to DLQ, permanent to DLQ |
-| Panic Recovery | Panic rides retry ladder to DLQ, consumption continues |
-| Confirms | Publisher confirm mode |
-| Reconnection | Publisher and consumer recovery after connection loss |
-| Shutdown | Requeue without burning retry, Close waits for in-flight |
+| Happy Path | Publish/consume, correlation ID propagation, message deleted |
+| DLQ | Permanent error quarantined with the source message id, source queue emptied |
+| Retry Ladder | Inflated receive count still takes the first ladder step |
+| Shutdown | Message immediately visible again after cancellation |
 | Concurrency | Parallel handlers reach configured concurrency |
-| Misc | ErrAlreadyConsuming, jittered per-message TTL |
 
-Integration tests are skipped with `-short` or when Docker is unavailable.
+Integration tests are skipped with `-short`, and when Docker is unavailable
+outside CI; in CI a missing Docker daemon fails.
 
-**`config/rabbitmq_test.go`**
+**`config/sqs_test.go`**
 
 | Category | Coverage |
 | -------- | -------- |
-| URL | URL generation with credentials |
-| RetryDelays | Defaults, parsing, panic cases |
+| RetryDelays | Defaults, parsing, panic cases incl. the 11h ceiling |
 | WithDefaults | Zero-value normalization, explicit values kept |
-| Prefixed Env | Prefix override, fallback (incl. whitespace-only), defaults, new fields, jitter validation |
-| Bool Parsing | Accepted forms incl. trimming; malformed values panic naming the resolved variable |
-| Consumer Settings | PrefetchCount, ConsumerTag fields |
+| Prefixed Env | Prefix override, fallback (incl. whitespace-only), defaults, all fields |
+| Validation | Missing required vars, field bounds, visibility timeout range, endpoint outside development |
 
 **`config/helpers_test.go`**
 

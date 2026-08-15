@@ -16,6 +16,7 @@ func clearSweeperEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
 		"SWEEPER_INTERVAL",
+		"SWEEPER_PASS_TIMEOUT",
 		"SWEEPER_PENDING_AGE",
 		"SWEEPER_PROCESSING_AGE",
 		"SWEEPER_MAX_ATTEMPTS",
@@ -53,10 +54,14 @@ func TestNewSweeperConfig_Defaults(t *testing.T) {
 func TestNewSweeperConfig_DefaultClearsFloorForLongLadder(t *testing.T) {
 	clearSweeperEnv(t)
 
-	cfg := NewSweeperConfig(DefaultRetryDelays(), 5*time.Minute)
+	jobTimeout := 5 * time.Minute
+	ladder := DefaultRetryDelays()
+	floor := ladder[len(ladder)-1] + jobTimeout
 
-	if cfg.ProcessingAge <= 12*time.Hour+5*time.Minute {
-		t.Errorf("ProcessingAge = %s, want above the 12h5m floor", cfg.ProcessingAge)
+	cfg := NewSweeperConfig(ladder, jobTimeout)
+
+	if cfg.ProcessingAge <= floor {
+		t.Errorf("ProcessingAge = %s, want above the %s floor", cfg.ProcessingAge, floor)
 	}
 }
 

@@ -5,153 +5,127 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"math"
 	"runtime/debug"
 	"sync"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/service/sqs"
+	"github.com/aws/aws-sdk-go-v2/service/sqs/types"
+
 	"github.com/adeptry-app/go-common/config"
 	"github.com/adeptry-app/go-common/logger"
-	amqp "github.com/rabbitmq/amqp091-go"
 )
-
-// RetryCountHeader is the AMQP header key for tracking retry attempts
-const RetryCountHeader = "x-retry-count"
 
 // Consumer errors
 var (
-	ErrConsumerClosed        = errors.New("consumer is closed")
-	ErrConsumeSetupFailed    = errors.New("failed to setup consumer")
-	ErrNilPublisher          = errors.New("publisher is required")
-	ErrAlreadyConsuming      = errors.New("consumer is already consuming")
-	ErrDeliveryChannelClosed = errors.New("delivery channel closed")
-	ErrReconnectFailed       = errors.New("reconnect attempts exhausted")
+	ErrConsumerClosed   = errors.New("consumer is closed")
+	ErrAlreadyConsuming = errors.New("consumer is already consuming")
+	ErrReceiveFailed    = errors.New("failed to receive messages")
 )
 
+// Backoff between failed receives, so an outage does not spin the loop.
+const (
+	receiveInitialDelay = 1 * time.Second
+	receiveMaxDelay     = 30 * time.Second
+)
+
+// settleTimeout bounds the call that settles a delivery. Settling runs on a
+// detached context so a shutdown mid-handler still releases the message.
+const settleTimeout = 10 * time.Second
+
 // MessageHandler processes a single message delivery.
-// Return nil to ACK the message, return error to trigger retry logic.
-// Wrap errors with Permanent() to skip retries and go straight to the DLQ.
+// Return nil to delete the message, return error to trigger retry logic.
+// Wrap errors with Permanent() to skip retries and go straight to the DLQ, and
+// with WithAttempt() to pick the ladder step matching the row's own attempt.
 // The context carries the message correlation ID (logger.GetCorrelationID).
 //
 // A panic inside the handler does not crash the process: it is recovered,
 // logged with the stack, and treated as a transient handler error that rides
-// the retry ladder (reaching the DLQ once retries are exhausted).
-type MessageHandler func(ctx context.Context, delivery amqp.Delivery) error
+// the retry ladder.
+type MessageHandler func(ctx context.Context, delivery Delivery) error
 
 // Consumer defines the interface for message queue consuming
 type Consumer interface {
 	// Consume starts consuming messages and blocks until context is cancelled
 	Consume(ctx context.Context, handler MessageHandler) error
-	// Close stops consuming and closes connections
+	// Close stops consuming
 	Close() error
 }
 
-// RabbitMQConsumer implements Consumer for RabbitMQ
-type RabbitMQConsumer struct {
+// SQSConsumer implements Consumer for SQS
+type SQSConsumer struct {
 	mu        sync.Mutex
 	closed    bool
 	consuming bool
 	runErr    error
 	runDone   chan struct{}
-	conn      *amqp.Connection
-	channel   *amqp.Channel
-	publisher *RabbitMQPublisher
-	config    config.RabbitMQConfig
+	client    sqsAPI
+	cfg       config.SQSConfig
+	name      string
 	logger    *slog.Logger
 	metrics   MetricsRecorder
 	stopCh    chan struct{}
-	stopOnce  sync.Once
 }
 
-// NewRabbitMQConsumer creates a new consumer that shares queue infrastructure with the publisher.
-// The publisher must be created first as it declares all queues.
-// If logger is nil, slog.Default() is used.
-func NewRabbitMQConsumer(
-	cfg config.RabbitMQConfig,
-	publisher *RabbitMQPublisher,
+// NewSQSConsumer creates a consumer for the queue named by cfg.QueueURL.
+// If logger is nil, slog.Default() is used. ctx bounds credential resolution
+// only, not the lifetime of the consumer.
+func NewSQSConsumer(
+	ctx context.Context,
+	cfg config.SQSConfig,
 	logger *slog.Logger,
 	opts ...ConsumerOption,
-) (*RabbitMQConsumer, error) {
-	if publisher == nil {
-		return nil, ErrNilPublisher
+) (*SQSConsumer, error) {
+	client, err := newSQSClient(ctx, cfg)
+	if err != nil {
+		return nil, err
 	}
-	if logger == nil {
-		logger = slog.Default()
+	return newConsumer(client, cfg, logger, opts...), nil
+}
+
+// newConsumer wires an already-built client, so tests can pass a fake.
+func newConsumer(client sqsAPI, cfg config.SQSConfig, log *slog.Logger, opts ...ConsumerOption) *SQSConsumer {
+	if log == nil {
+		log = slog.Default()
 	}
 
-	c := &RabbitMQConsumer{
-		publisher: publisher,
-		config:    cfg.WithDefaults(),
-		logger:    logger,
-		metrics:   noopMetrics{},
-		stopCh:    make(chan struct{}),
+	c := &SQSConsumer{
+		client:  client,
+		cfg:     cfg.WithDefaults(),
+		name:    queueName(cfg.QueueURL),
+		logger:  log,
+		metrics: noopMetrics{},
+		stopCh:  make(chan struct{}),
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
-
-	// Dial with the normalized config so the initial connection matches the
-	// reconnect path in setupConsume.
-	conn, err := dial(c.config)
-	if err != nil {
-		return nil, err
-	}
-
-	ch, err := conn.Channel()
-	if err != nil {
-		_ = conn.Close()
-		return nil, fmt.Errorf("%w: %v", ErrChannelFailed, err)
-	}
-
-	// Set QoS for fair dispatch
-	if err := ch.Qos(c.config.PrefetchCount, 0, false); err != nil {
-		_ = closeResources(ch, conn)
-		return nil, fmt.Errorf("%w: set qos: %v", ErrConsumeSetupFailed, err)
-	}
-
-	c.conn = conn
-	c.channel = ch
-	return c, nil
+	return c
 }
 
-func (c *RabbitMQConsumer) isClosed() bool {
+func (c *SQSConsumer) isClosed() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.closed
 }
 
-// receiveLoop exit reasons.
-const (
-	exitCtx = iota
-	exitStop
-	exitStream
-)
-
-// Consume starts consuming messages from the queue and blocks until the
-// context is cancelled or Close is called.
-//
-// Unlike the publisher (whose supervisor goroutine reconnects in the
-// background), reconnection runs inline in this loop because in-flight
-// handlers must be drained before the channel they ack on is replaced.
-//
-// Unless cfg.DisableReconnect is set, a dropped connection or channel is
-// re-established with exponential backoff and consumption resumes; Consume
-// then only returns ctx.Err() on cancellation, ErrConsumerClosed after
-// Close, or ErrReconnectFailed when cfg.ReconnectMaxAttempts is exceeded.
-// With reconnection disabled, it returns ErrDeliveryChannelClosed when the
-// broker connection drops (the previous behavior).
+// Consume long-polls the queue and blocks until the context is cancelled or
+// Close is called.
 //
 // Messages are processed with cfg.ConsumerConcurrency parallel handlers
-// (default 1, sequential). Consume waits for in-flight handlers to finish
+// (default 1, sequential), and a receive never asks for more messages than
+// there are free handler slots. Consume waits for in-flight handlers to finish
 // before returning. Only one Consume may be active per consumer; concurrent
 // calls return ErrAlreadyConsuming.
 //
-// The handler is called for each message; return nil to ACK, an error to
-// trigger the retry ladder, or a Permanent()-wrapped error to send the
-// message straight to the DLQ. If the context is cancelled while a message
-// is being handled, the message is requeued without consuming a retry
-// attempt.
-func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) (retErr error) {
+// A failed receive is retried with backoff indefinitely, so Consume returns
+// only on context cancellation or Close; ConsumptionError is what makes a
+// stuck consumer visible. The handler is called for each message; return nil
+// to delete it, an error to ride the retry ladder, or a Permanent()-wrapped
+// error to quarantine it in the DLQ. If the context is cancelled while a
+// message is being handled, the message is made visible again immediately.
+func (c *SQSConsumer) Consume(ctx context.Context, handler MessageHandler) (retErr error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -167,12 +141,11 @@ func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) 
 	c.runDone = runDone
 	c.mu.Unlock()
 
-	sem := make(chan struct{}, c.config.ConsumerConcurrency)
+	sem := make(chan struct{}, c.cfg.ConsumerConcurrency)
 	var wg sync.WaitGroup
 
 	defer func() {
 		wg.Wait()
-		_ = c.teardown()
 		c.mu.Lock()
 		c.consuming = false
 		c.runErr = retErr
@@ -180,311 +153,193 @@ func (c *RabbitMQConsumer) Consume(ctx context.Context, handler MessageHandler) 
 		close(runDone)
 	}()
 
-	if c.config.ConsumerConcurrency > c.config.PrefetchCount {
-		c.logger.Warn("ConsumerConcurrency exceeds PrefetchCount; effective parallelism is capped by prefetch",
-			"concurrency", c.config.ConsumerConcurrency,
-			"prefetch", c.config.PrefetchCount,
-		)
-	}
+	// Close must interrupt an in-flight long poll rather than wait it out.
+	pollCtx, stopPolling := context.WithCancel(ctx)
+	defer stopPolling()
+	go func() {
+		select {
+		case <-pollCtx.Done():
+		case <-c.stopCh:
+			stopPolling()
+		}
+	}()
 
-	attempt := 0
+	c.logger.Info("Consumer started", "queue", c.name, "concurrency", c.cfg.ConsumerConcurrency)
+
+	failures := 0
 	for {
-		deliveries, err := c.setupConsume()
+		slots, err := c.reserve(ctx, sem)
 		if err != nil {
+			return err
+		}
+
+		messages, receivedAt, err := c.receive(pollCtx, slots)
+		if err != nil {
+			release(sem, slots)
 			if ctx.Err() != nil {
+				c.logger.Info("Consumer stopping", "reason", ctx.Err())
 				return ctx.Err()
 			}
 			if c.isClosed() {
+				c.logger.Info("Consumer stopping", "reason", "closed")
 				return ErrConsumerClosed
 			}
-			if c.config.DisableReconnect {
-				return err
-			}
-			attempt++
-			if c.config.ReconnectMaxAttempts > 0 && attempt > c.config.ReconnectMaxAttempts {
-				return fmt.Errorf("%w: %v", ErrReconnectFailed, err)
-			}
-			// With unlimited attempts (the default) Consume never returns, so the
-			// retry state itself has to be what health checks observe.
-			c.setRunErr(fmt.Errorf("setup failed after %d attempt(s): %w", attempt, err))
-			c.logger.Warn("Consumer setup failed, retrying",
-				"queue", c.config.Queue,
-				"attempt", attempt,
-				"error", err,
-			)
+			failures++
+			// Consume never returns while receives keep failing, so the retry
+			// state itself has to be what health checks observe.
+			c.setRunErr(fmt.Errorf("receive failed after %d attempt(s): %w", failures, err))
+			c.logger.Warn("Receive failed, retrying", "queue", c.name, "attempt", failures, "error", err)
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-c.stopCh:
 				return ErrConsumerClosed
-			case <-time.After(reconnectDelay(c.config, attempt)):
+			case <-time.After(receiveBackoff(failures)):
 			}
 			continue
 		}
-		attempt = 0
+		failures = 0
 		c.setRunErr(nil)
 
-		c.logger.Info("Consumer started", "queue", c.config.Queue, "tag", c.config.ConsumerTag)
-
-		switch c.receiveLoop(ctx, deliveries, handler, sem, &wg) {
-		case exitCtx:
-			c.logger.Info("Consumer stopping", "reason", ctx.Err())
-			return ctx.Err()
-		case exitStop:
-			c.logger.Info("Consumer stopping", "reason", "closed")
-			return ErrConsumerClosed
-		case exitStream:
-			if c.config.DisableReconnect {
-				c.logger.Warn("Delivery channel closed")
-				return ErrDeliveryChannelClosed
-			}
-			c.logger.Warn("Delivery channel closed, reconnecting", "queue", c.config.Queue)
-			c.metrics.RecordReconnect(ComponentConsumer)
-			// Let in-flight handlers finish before tearing down the channel
-			// they ack on.
-			wg.Wait()
-			_ = c.teardown()
-		}
-	}
-}
-
-// setupConsume ensures a live connection and channel, re-declares the
-// topology (idempotent, recovers queues after a broker data loss), applies
-// QoS, and starts delivery.
-func (c *RabbitMQConsumer) setupConsume() (<-chan amqp.Delivery, error) {
-	c.mu.Lock()
-	conn, ch := c.conn, c.channel
-	c.mu.Unlock()
-
-	if conn == nil || conn.IsClosed() {
-		_ = c.teardown()
-		newConn, err := dial(c.config)
-		if err != nil {
-			return nil, err
-		}
-		conn = newConn
-		ch = nil
-	}
-
-	if ch == nil || ch.IsClosed() {
-		newCh, err := conn.Channel()
-		if err != nil {
-			_ = conn.Close()
-			return nil, fmt.Errorf("%w: %v", ErrChannelFailed, err)
-		}
-		ch = newCh
-	}
-
-	cleanup := func() { _ = closeResources(ch, conn) }
-
-	if _, err := declareTopology(ch, c.config); err != nil {
-		cleanup()
-		return nil, err
-	}
-
-	if err := ch.Qos(c.config.PrefetchCount, 0, false); err != nil {
-		cleanup()
-		return nil, fmt.Errorf("%w: set qos: %v", ErrConsumeSetupFailed, err)
-	}
-
-	deliveries, err := ch.Consume(
-		c.config.Queue,
-		c.config.ConsumerTag,
-		false, // auto-ack disabled for manual control
-		false, // exclusive
-		false, // no-local
-		false, // no-wait
-		nil,   // args
-	)
-	if err != nil {
-		cleanup()
-		return nil, fmt.Errorf("%w: consume: %v", ErrConsumeSetupFailed, err)
-	}
-
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		cleanup()
-		return nil, ErrConsumerClosed
-	}
-	c.conn = conn
-	c.channel = ch
-	c.mu.Unlock()
-
-	return deliveries, nil
-}
-
-// receiveLoop dispatches deliveries to handler goroutines bounded by sem
-// until the context is cancelled, the consumer is closed, or the delivery
-// stream closes.
-func (c *RabbitMQConsumer) receiveLoop(
-	ctx context.Context,
-	deliveries <-chan amqp.Delivery,
-	handler MessageHandler,
-	sem chan struct{},
-	wg *sync.WaitGroup,
-) int {
-	for {
-		select {
-		case <-ctx.Done():
-			return exitCtx
-		case <-c.stopCh:
-			return exitStop
-		case delivery, ok := <-deliveries:
-			if !ok {
-				return exitStream
-			}
-
-			// Acquire a concurrency slot before dispatching so slot order
-			// follows delivery order.
-			select {
-			case sem <- struct{}{}:
-			case <-ctx.Done():
-				c.requeue(delivery)
-				return exitCtx
-			case <-c.stopCh:
-				c.requeue(delivery)
-				return exitStop
-			}
-
+		release(sem, slots-len(messages))
+		for _, message := range messages {
 			wg.Add(1)
-			go func(d amqp.Delivery) {
+			go func(m types.Message) {
 				defer wg.Done()
 				defer func() { <-sem }()
-				c.processDelivery(ctx, d, handler)
-			}(delivery)
+				c.processMessage(ctx, m, receivedAt, handler)
+			}(message)
 		}
 	}
 }
 
-// requeue returns an unprocessed delivery to the queue during shutdown.
-func (c *RabbitMQConsumer) requeue(delivery amqp.Delivery) {
-	if err := delivery.Nack(false, true); err != nil {
-		c.logger.Error("Failed to NACK message for requeue", "error", err, "messageId", delivery.MessageId)
+// reserve blocks for one handler slot, then takes any others already free, so
+// a receive never pulls more messages than can be handled at once.
+func (c *SQSConsumer) reserve(ctx context.Context, sem chan struct{}) (int, error) {
+	select {
+	case sem <- struct{}{}:
+	case <-ctx.Done():
+		c.logger.Info("Consumer stopping", "reason", ctx.Err())
+		return 0, ctx.Err()
+	case <-c.stopCh:
+		c.logger.Info("Consumer stopping", "reason", "closed")
+		return 0, ErrConsumerClosed
+	}
+
+	slots := 1
+	for slots < c.cfg.MaxNumberOfMessages {
+		select {
+		case sem <- struct{}{}:
+			slots++
+		default:
+			return slots, nil
+		}
+	}
+	return slots, nil
+}
+
+// release hands back slots a receive did not use.
+func release(sem chan struct{}, n int) {
+	for range n {
+		<-sem
 	}
 }
 
-// processDelivery handles a single message with retry logic
-func (c *RabbitMQConsumer) processDelivery(ctx context.Context, delivery amqp.Delivery, handler MessageHandler) {
-	retryCount := GetRetryCount(delivery)
+// receive long-polls for up to max messages and reports when they arrived,
+// which is the instant every visibility timeout on them is measured from.
+func (c *SQSConsumer) receive(ctx context.Context, max int) ([]types.Message, time.Time, error) {
+	out, err := c.client.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{
+		QueueUrl:            aws.String(c.cfg.QueueURL),
+		MaxNumberOfMessages: count(max),
+		WaitTimeSeconds:     count(c.cfg.WaitTimeSeconds),
+		// Passed on every receive so a queue created out of band cannot fall
+		// back to the 30s SQS default and redeliver a job that is still running.
+		VisibilityTimeout:           seconds(c.cfg.VisibilityTimeout),
+		MessageSystemAttributeNames: []types.MessageSystemAttributeName{types.MessageSystemAttributeNameApproximateReceiveCount},
+		MessageAttributeNames:       []string{correlationAttribute},
+	})
+	if err != nil {
+		return nil, time.Time{}, fmt.Errorf("%w: %v", ErrReceiveFailed, err)
+	}
+	return out.Messages, time.Now(), nil
+}
+
+// processMessage runs the handler and settles the message on its outcome.
+func (c *SQSConsumer) processMessage(ctx context.Context, m types.Message, receivedAt time.Time, handler MessageHandler) {
+	delivery := deliveryFrom(m, receivedAt)
 
 	// Propagate the message correlation ID so handler logs line up with the
 	// publishing request.
-	if delivery.CorrelationId != "" {
-		ctx = logger.AddCorrelationID(ctx, delivery.CorrelationId)
+	if delivery.CorrelationID != "" {
+		ctx = logger.AddCorrelationID(ctx, delivery.CorrelationID)
 	}
 
 	c.logger.Debug("Processing message",
-		"messageId", delivery.MessageId,
-		"correlationId", delivery.CorrelationId,
-		"retryCount", retryCount,
+		"messageId", delivery.MessageID,
+		"correlationId", delivery.CorrelationID,
+		"receiveCount", delivery.ReceiveCount,
 	)
 
 	start := time.Now()
 	err := c.invokeHandler(ctx, delivery, handler)
 	duration := time.Since(start)
 
-	if err == nil {
-		// Success - ACK
-		if ackErr := delivery.Ack(false); ackErr != nil {
-			c.logger.Error("Failed to ACK message", "error", ackErr, "messageId", delivery.MessageId)
-		}
-		c.metrics.RecordConsume(c.config.Queue, OutcomeSuccess, duration)
-		return
-	}
+	// Settling outlives the consume context: a shutdown mid-handler must still
+	// release the message rather than leave it hidden for the whole timeout.
+	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), settleTimeout)
+	defer cancel()
 
-	// Shutdown in progress - the failure is most likely caused by the
-	// cancelled context, so requeue without consuming a retry attempt.
-	if ctx.Err() != nil {
-		c.logger.Info("Requeueing message due to shutdown",
-			"messageId", delivery.MessageId,
-			"error", err,
-		)
-		c.requeue(delivery)
-		c.metrics.RecordConsume(c.config.Queue, OutcomeRequeued, duration)
-		return
-	}
+	switch {
+	case err == nil:
+		c.delete(settleCtx, m, delivery)
+		c.metrics.RecordConsume(c.name, OutcomeSuccess, duration)
 
-	// Permanent failure - NACK without requeue routes to the DLQ via the
-	// main queue's dead-letter configuration.
-	if errors.Is(err, ErrPermanent) {
+	case ctx.Err() != nil:
+		// Shutdown: hand the message straight back, costing a receive rather
+		// than a ladder step.
+		c.logger.Info("Returning message due to shutdown", "messageId", delivery.MessageID, "error", err)
+		c.changeVisibility(settleCtx, m, delivery, 0)
+		c.metrics.RecordConsume(c.name, OutcomeRequeued, duration)
+
+	case errors.Is(err, ErrPermanent):
 		c.logger.Warn("Permanent failure, sending to DLQ",
 			"error", err,
-			"messageId", delivery.MessageId,
-			"retryCount", retryCount,
+			"messageId", delivery.MessageID,
+			"receiveCount", delivery.ReceiveCount,
 		)
-		if nackErr := delivery.Nack(false, false); nackErr != nil {
-			c.logger.Error("Failed to NACK message", "error", nackErr)
-		}
-		c.metrics.RecordConsume(c.config.Queue, OutcomeDLQ, duration)
-		return
-	}
+		c.quarantine(settleCtx, m, delivery)
+		c.metrics.RecordConsume(c.name, OutcomeDLQ, duration)
 
-	// Handler returned error - determine retry or DLQ
-	c.logger.Warn("Handler failed",
-		"error", err,
-		"messageId", delivery.MessageId,
-		"retryCount", retryCount,
-		"maxRetries", c.publisher.MaxRetries(),
-	)
-
-	if WillRetry(delivery, c.publisher.MaxRetries()) {
-		// Try to republish to retry queue first (before ACK)
-		if pubErr := c.publishToRetryWithCount(ctx, retryCount, delivery); pubErr != nil {
-			// Publish failed - NACK to requeue for redelivery
-			c.logger.Error("Failed to publish to retry queue, requeueing",
-				"error", pubErr,
-				"retryIndex", retryCount,
-				"messageId", delivery.MessageId,
-			)
-			c.requeue(delivery)
-			c.metrics.RecordConsume(c.config.Queue, OutcomeRequeued, duration)
-			return
-		}
-
-		// Publish succeeded - now ACK the original
-		if ackErr := delivery.Ack(false); ackErr != nil {
-			// At-least-once delivery: the message is already in the retry
-			// queue and the broker will redeliver this copy, so a duplicate
-			// is possible. Handlers must be idempotent.
-			c.logger.Error("Failed to ACK after retry publish", "error", ackErr)
-			c.metrics.RecordConsume(c.config.Queue, OutcomeRetry, duration)
-			return
-		}
-
-		c.logger.Info("Message queued for retry",
-			"messageId", delivery.MessageId,
-			"retryIndex", retryCount,
-			"nextRetryCount", retryCount+1,
+	default:
+		delay := c.retryDelay(delivery, err)
+		c.logger.Warn("Handler failed, backing off",
+			"error", err,
+			"messageId", delivery.MessageID,
+			"receiveCount", delivery.ReceiveCount,
+			"delay", delay,
 		)
-		c.metrics.RecordConsume(c.config.Queue, OutcomeRetry, duration)
-	} else {
-		// Max retries exhausted - NACK to DLQ
-		c.logger.Error("Max retries exhausted, sending to DLQ",
-			"messageId", delivery.MessageId,
-			"retryCount", retryCount,
-		)
-		if nackErr := delivery.Nack(false, false); nackErr != nil {
-			c.logger.Error("Failed to NACK message", "error", nackErr)
+		// With no ladder configured the queue's own visibility timeout is the
+		// back-off; asking for zero would spin the message.
+		if delay > 0 {
+			c.changeVisibility(settleCtx, m, delivery, delay)
 		}
-		c.metrics.RecordConsume(c.config.Queue, OutcomeDLQ, duration)
+		c.metrics.RecordConsume(c.name, OutcomeRetry, duration)
 	}
 }
 
 // invokeHandler calls the handler, converting a panic into an ordinary
-// transient (not Permanent) error so processDelivery's ack/nack routing
-// still runs: a temporary cause gets its retry chances, and a deterministic
-// panic reaches the DLQ once the ladder is exhausted instead of
-// crash-looping the process.
-func (c *RabbitMQConsumer) invokeHandler(ctx context.Context, delivery amqp.Delivery, handler MessageHandler) (err error) {
+// transient (not Permanent) error so processMessage's settling still runs: a
+// temporary cause gets its retry chances, and a deterministic panic reaches
+// the DLQ once the row's budget is spent instead of crash-looping the process.
+func (c *SQSConsumer) invokeHandler(ctx context.Context, delivery Delivery, handler MessageHandler) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			c.logger.Error("Handler panicked",
 				"panic", r,
 				"stack", string(debug.Stack()),
-				"messageId", delivery.MessageId,
-				"correlationId", delivery.CorrelationId,
-				"retryCount", GetRetryCount(delivery),
+				"messageId", delivery.MessageID,
+				"correlationId", delivery.CorrelationID,
+				"receiveCount", delivery.ReceiveCount,
 			)
 			err = fmt.Errorf("handler panic: %v", r)
 		}
@@ -492,90 +347,117 @@ func (c *RabbitMQConsumer) invokeHandler(ctx context.Context, delivery amqp.Deli
 	return handler(ctx, delivery)
 }
 
-// publishToRetryWithCount publishes to retry queue with incremented retry count header
-func (c *RabbitMQConsumer) publishToRetryWithCount(ctx context.Context, currentRetry int, delivery amqp.Delivery) error {
-	// Create new headers with incremented retry count
-	headers := make(amqp.Table)
-	for k, v := range delivery.Headers {
-		headers[k] = v
-	}
-
-	nextRetry := currentRetry + 1
-	if nextRetry > math.MaxInt32 {
-		nextRetry = math.MaxInt32
-	}
-	headers[RetryCountHeader] = int32(nextRetry)
-
-	// Use publisher's channel for retry publish
-	return c.publisher.PublishToRetry(ctx, currentRetry, delivery.Body, delivery.CorrelationId, headers)
-}
-
-// WillRetry reports whether a delivery that fails with a transient error
-// will be routed to a retry queue (true) or dead-lettered (false). It is
-// the exact predicate the consumer applies after the handler returns, so
-// handlers can record the upcoming routing decision without re-deriving it.
-// maxRetries is the number of configured retry queues
-// (publisher.MaxRetries()). Errors matching ErrPermanent go straight to the
-// DLQ regardless.
-func WillRetry(delivery amqp.Delivery, maxRetries int) bool {
-	return GetRetryCount(delivery) < maxRetries
-}
-
-// GetRetryCount extracts the retry count from message headers.
-// Unknown types and negative values are treated as 0.
-func GetRetryCount(delivery amqp.Delivery) int {
-	if delivery.Headers == nil {
+// retryDelay picks the ladder step for a failed delivery: the business attempt
+// the handler reported, or the receive count when it reported none (a failure
+// before the row was claimed, which must still back off rather than spin).
+// Both are clamped to the ladder, and the result to what is left of the SQS
+// ceiling, which runs from the receive rather than from this call.
+func (c *SQSConsumer) retryDelay(delivery Delivery, err error) time.Duration {
+	if len(c.cfg.RetryDelays) == 0 {
 		return 0
 	}
 
-	val, ok := delivery.Headers[RetryCountHeader]
+	step, ok := AttemptOf(err)
 	if !ok {
-		return 0
+		step = delivery.ReceiveCount
 	}
+	step = min(max(step, 1), len(c.cfg.RetryDelays))
 
-	count := 0
-	switch v := val.(type) {
-	case int8:
-		count = int(v)
-	case int16:
-		count = int(v)
-	case int32:
-		count = int(v)
-	case int64:
-		count = int(v)
-	case int:
-		count = v
-	}
-	if count < 0 {
-		return 0
-	}
-	return count
+	delay := jittered(c.cfg.RetryDelays[step-1], c.cfg.RetryJitter)
+	remaining := config.MaxVisibilityTimeout - time.Since(delivery.ReceivedAt)
+	return max(min(delay, remaining), 0)
 }
 
-// Connection returns the current AMQP connection for health checks. The
-// returned pointer changes after a reconnect; health checks should use
-// health.NewRabbitMQCheckerWithProvider(consumer.Connection) so they always
-// observe the current connection.
-func (c *RabbitMQConsumer) Connection() *amqp.Connection {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.conn
+// jittered randomly shortens delay by up to the jitter fraction (0 to 1) so
+// messages that failed together do not all return at the same instant.
+// Jitter only ever shortens, so it cannot push a delay past the ceiling.
+func jittered(delay time.Duration, jitter float64) time.Duration {
+	if jitter <= 0 || delay <= 0 {
+		return delay
+	}
+	if jitter > 1 {
+		jitter = 1
+	}
+	return delay - time.Duration(randFloat64()*jitter*float64(delay))
+}
+
+// receiveBackoff returns the delay before receive attempt n (1-based):
+// exponential growth from receiveInitialDelay capped at receiveMaxDelay, with
+// up to 25% random jitter to avoid synchronized retry storms.
+func receiveBackoff(attempt int) time.Duration {
+	delay := receiveInitialDelay
+	for i := 1; i < attempt && delay < receiveMaxDelay; i++ {
+		delay *= 2
+	}
+	if delay > receiveMaxDelay {
+		delay = receiveMaxDelay
+	}
+	return delay + time.Duration(randFloat64()*0.25*float64(delay))
+}
+
+// quarantine copies the body to the DLQ and then deletes the source. The two
+// are not atomic, so the copy carries the source message id for deduping and a
+// failed delete leaves the message: the redelivery re-quarantines it rather
+// than losing the body.
+func (c *SQSConsumer) quarantine(ctx context.Context, m types.Message, delivery Delivery) {
+	attributes := make(map[string]types.MessageAttributeValue, 2)
+	if delivery.CorrelationID != "" {
+		attributes[correlationAttribute] = stringAttribute(delivery.CorrelationID)
+	}
+	if delivery.MessageID != "" {
+		attributes[sourceIDAttribute] = stringAttribute(delivery.MessageID)
+	}
+
+	if _, err := c.client.SendMessage(ctx, &sqs.SendMessageInput{
+		QueueUrl:          aws.String(c.cfg.DLQURL),
+		MessageBody:       m.Body,
+		MessageAttributes: attributes,
+	}); err != nil {
+		c.logger.Error("Failed to send message to DLQ", "error", err, "messageId", delivery.MessageID)
+		return
+	}
+
+	c.delete(ctx, m, delivery)
+}
+
+// delete removes a settled message from the queue.
+func (c *SQSConsumer) delete(ctx context.Context, m types.Message, delivery Delivery) {
+	if _, err := c.client.DeleteMessage(ctx, &sqs.DeleteMessageInput{
+		QueueUrl:      aws.String(c.cfg.QueueURL),
+		ReceiptHandle: m.ReceiptHandle,
+	}); err != nil {
+		c.logger.Error("Failed to delete message", "error", err, "messageId", delivery.MessageID)
+	}
+}
+
+// changeVisibility hides the message for delay before it is redelivered.
+func (c *SQSConsumer) changeVisibility(ctx context.Context, m types.Message, delivery Delivery, delay time.Duration) {
+	if _, err := c.client.ChangeMessageVisibility(ctx, &sqs.ChangeMessageVisibilityInput{
+		QueueUrl:          aws.String(c.cfg.QueueURL),
+		ReceiptHandle:     m.ReceiptHandle,
+		VisibilityTimeout: seconds(delay),
+	}); err != nil {
+		c.logger.Error("Failed to change message visibility",
+			"error", err,
+			"messageId", delivery.MessageID,
+			"delay", delay,
+		)
+	}
 }
 
 // setRunErr records why deliveries are not flowing, or nil once they are.
-func (c *RabbitMQConsumer) setRunErr(err error) {
+func (c *SQSConsumer) setRunErr(err error) {
 	c.mu.Lock()
 	c.runErr = err
 	c.mu.Unlock()
 }
 
 // ConsumptionError reports why messages are not being consumed - either
-// Consume stopped, or it is stuck retrying setup - and nil while deliveries
-// flow or after a clean shutdown. A live broker connection does not prove
-// consumption, so register this with
-// health.NewConsumerChecker(consumer.ConsumptionError): otherwise a consumer
-// that gave up, or one reconnecting forever, leaves the endpoint green.
-func (c *RabbitMQConsumer) ConsumptionError() error {
+// Consume stopped, or it is stuck retrying receives - and nil while deliveries
+// flow or after a clean shutdown. Register it with
+// health.NewConsumerChecker(consumer.ConsumptionError): a consumer that is
+// receiving nothing has no connection to lose, so nothing else reveals it.
+func (c *SQSConsumer) ConsumptionError() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -588,24 +470,14 @@ func (c *RabbitMQConsumer) ConsumptionError() error {
 	return c.runErr
 }
 
-// teardown closes and clears the current channel and connection.
-func (c *RabbitMQConsumer) teardown() error {
-	c.mu.Lock()
-	ch, conn := c.channel, c.conn
-	c.channel, c.conn = nil, nil
-	c.mu.Unlock()
-
-	return closeResources(ch, conn)
-}
-
-// Close stops consuming and closes the connection. If a Consume call is
-// active, Close blocks until in-flight handlers finish and Consume returns.
+// Close stops consuming. If a Consume call is active, Close blocks until
+// in-flight handlers finish and Consume returns.
 // Idempotent: subsequent calls return nil.
 //
 // Close must not be called from inside a MessageHandler: it waits for that
 // very handler to finish and would deadlock. To stop consuming from within a
 // handler, cancel the context passed to Consume instead.
-func (c *RabbitMQConsumer) Close() error {
+func (c *SQSConsumer) Close() error {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -615,20 +487,12 @@ func (c *RabbitMQConsumer) Close() error {
 	runDone := c.runDone
 	c.mu.Unlock()
 
-	c.stopOnce.Do(func() {
-		if c.stopCh != nil {
-			close(c.stopCh)
-		}
-	})
+	// Only one caller gets past the closed gate, so this closes exactly once.
+	close(c.stopCh)
 
-	// Wait for an active Consume to drain in-flight handlers and release its
-	// connection.
+	// Wait for an active Consume to drain in-flight handlers.
 	if runDone != nil {
 		<-runDone
-	}
-
-	if err := c.teardown(); err != nil {
-		return fmt.Errorf("%w: %w", ErrCloseFailed, err)
 	}
 	return nil
 }

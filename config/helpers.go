@@ -8,7 +8,7 @@ import (
 )
 
 // unprefixed reads plain environment variables through the same helpers the
-// prefixed (RabbitMQ) loader uses, so both share one set of parsing rules.
+// prefixed (SQS) loader uses, so both share one set of parsing rules.
 var unprefixed = prefixedEnv{}
 
 // GetEnv returns environment variable value or default if not set

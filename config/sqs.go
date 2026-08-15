@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -11,71 +10,69 @@ import (
 	"github.com/go-playground/validator/v10"
 )
 
-// Default values for optional RabbitMQ settings.
+// SQS ceilings. A visibility timeout is measured from the ReceiveMessage call,
+// so the ladder stops an hour short to leave room for handler runtime.
 const (
-	DefaultHeartbeat             = 10 * time.Second
-	DefaultReconnectInitialDelay = 1 * time.Second
-	DefaultReconnectMaxDelay     = 30 * time.Second
+	MaxVisibilityTimeout = 12 * time.Hour
+	MaxRetryDelay        = 11 * time.Hour
 )
 
-// RabbitMQConfig holds RabbitMQ connection configuration
-type RabbitMQConfig struct {
-	Host        string `validate:"required"`
-	Port        int    `validate:"required,min=1,max=65535"`
-	User        string `validate:"required"`
-	Password    string `validate:"required"`
-	Exchange    string `validate:"required"`
-	Queue       string `validate:"required"`
-	TLS         bool
-	RetryDelays []time.Duration // Delays for retry queues (e.g., 5s, 30s, 5m, 30m, 2h)
+// Default values for optional SQS settings.
+const (
+	DefaultMaxNumberOfMessages = 1
+	DefaultWaitTimeSeconds     = 20
+	DefaultVisibilityTimeout   = 30 * time.Second
+	DefaultConsumerConcurrency = 1
+)
+
+// SQSConfig holds SQS queue configuration.
+type SQSConfig struct {
+	QueueURL string `validate:"required,url"`
+	DLQURL   string `validate:"required,url"`
+	Region   string `validate:"required"`
+
+	// Endpoint overrides the AWS endpoint for LocalStack; development only.
+	Endpoint string
+
+	// RetryDelays is the retry ladder, applied as a per-failure visibility
+	// timeout. Indexed by the business attempt the handler reports back.
+	RetryDelays []time.Duration
 
 	// RetryJitter randomly shortens each retry delay by up to this fraction
 	// (0 to 1) to spread out retries of messages that failed together.
 	// 0 disables jitter. See queue package docs for semantics.
 	RetryJitter float64 `validate:"min=0,max=1"`
 
-	// Heartbeat is the AMQP heartbeat interval. Zero means DefaultHeartbeat.
-	Heartbeat time.Duration
+	// MaxNumberOfMessages is the receive batch size; SQS caps it at 10.
+	MaxNumberOfMessages int `validate:"omitempty,min=1,max=10"`
 
-	// PublisherConfirms enables publisher confirm mode: Publish blocks until
-	// the broker acknowledges the message. Off by default.
-	PublisherConfirms bool
+	// WaitTimeSeconds is the long-poll wait; SQS caps it at 20.
+	WaitTimeSeconds int `validate:"min=0,max=20"`
 
-	// Reconnection settings. Reconnection is enabled by default; set
-	// DisableReconnect to true to restore the old fail-fast behavior.
-	DisableReconnect      bool
-	ReconnectMaxAttempts  int           `validate:"min=0"` // 0 = unlimited
-	ReconnectInitialDelay time.Duration // zero means DefaultReconnectInitialDelay
-	ReconnectMaxDelay     time.Duration // zero means DefaultReconnectMaxDelay
-
-	// Consumer-specific settings (optional, only used by consumers)
-	PrefetchCount int    `validate:"omitempty,min=1"` // Number of messages to prefetch (QoS), defaults to 1
-	ConsumerTag   string // Unique identifier for this consumer
+	// VisibilityTimeout hides a received message from other consumers. It must
+	// exceed the handler timeout, since SQS reverts to it on every receive.
+	VisibilityTimeout time.Duration
 
 	// ConsumerConcurrency is the number of messages processed in parallel by
-	// Consume. Defaults to 1 (sequential, the previous behavior). Effective
-	// parallelism is capped by PrefetchCount.
+	// Consume. Defaults to 1 (sequential).
 	ConsumerConcurrency int `validate:"omitempty,min=1"`
 }
 
 // WithDefaults returns a copy of the config with zero-valued optional fields
 // replaced by their defaults. The queue package applies it on construction,
 // so configs built as struct literals behave the same as env-loaded ones.
-func (c RabbitMQConfig) WithDefaults() RabbitMQConfig {
-	if c.Heartbeat <= 0 {
-		c.Heartbeat = DefaultHeartbeat
+func (c SQSConfig) WithDefaults() SQSConfig {
+	if c.MaxNumberOfMessages <= 0 {
+		c.MaxNumberOfMessages = DefaultMaxNumberOfMessages
 	}
-	if c.ReconnectInitialDelay <= 0 {
-		c.ReconnectInitialDelay = DefaultReconnectInitialDelay
+	if c.WaitTimeSeconds <= 0 {
+		c.WaitTimeSeconds = DefaultWaitTimeSeconds
 	}
-	if c.ReconnectMaxDelay <= 0 {
-		c.ReconnectMaxDelay = DefaultReconnectMaxDelay
-	}
-	if c.PrefetchCount <= 0 {
-		c.PrefetchCount = 1
+	if c.VisibilityTimeout <= 0 {
+		c.VisibilityTimeout = DefaultVisibilityTimeout
 	}
 	if c.ConsumerConcurrency <= 0 {
-		c.ConsumerConcurrency = 1
+		c.ConsumerConcurrency = DefaultConsumerConcurrency
 	}
 	return c
 }
@@ -87,7 +84,7 @@ var defaultRetryDelays = []time.Duration{
 	5 * time.Minute,  // Service temporarily unavailable
 	30 * time.Minute, // Longer outage
 	2 * time.Hour,    // Extended issue
-	12 * time.Hour,   // Major outage, last retry before permanent failure
+	11 * time.Hour,   // Major outage, last retry before permanent failure
 }
 
 // DefaultRetryDelays returns a copy of the default retry delays
@@ -95,45 +92,45 @@ func DefaultRetryDelays() []time.Duration {
 	return append([]time.Duration(nil), defaultRetryDelays...)
 }
 
-// NewRabbitMQConfig loads RabbitMQ configuration from environment variables.
+// NewSQSConfig loads SQS configuration from environment variables.
 // It panics if required environment variables are missing or configuration is invalid.
-func NewRabbitMQConfig() RabbitMQConfig {
-	return NewRabbitMQConfigWithPrefix("")
+func NewSQSConfig() SQSConfig {
+	return NewSQSConfigWithPrefix("")
 }
 
-// NewRabbitMQConfigWithPrefix loads RabbitMQ configuration from environment
-// variables with an optional prefix, allowing one service to configure
-// multiple queues independently (e.g. prefix "AI_" reads AI_RABBITMQ_QUEUE).
-// For each variable the prefixed name is checked first, falling back to the
-// un-prefixed name, so shared settings (host, credentials) only need to be
-// set once. It panics if required variables are missing or invalid.
-func NewRabbitMQConfigWithPrefix(prefix string) RabbitMQConfig {
+// NewSQSConfigWithPrefix loads SQS configuration from environment variables
+// with an optional prefix, allowing one service to configure multiple queues
+// independently (e.g. prefix "AI_" reads AI_SQS_QUEUE_URL). For each variable
+// the prefixed name is checked first, falling back to the un-prefixed name, so
+// shared settings (region, endpoint) only need to be set once. It panics if
+// required variables are missing or invalid.
+func NewSQSConfigWithPrefix(prefix string) SQSConfig {
 	env := prefixedEnv{prefix: prefix}
 
-	cfg := RabbitMQConfig{
-		Host:                  env.required("RABBITMQ_HOST"),
-		Port:                  env.requiredInt("RABBITMQ_PORT"),
-		User:                  env.required("RABBITMQ_USER"),
-		Password:              env.required("RABBITMQ_PASSWORD"),
-		Exchange:              env.get("RABBITMQ_EXCHANGE", "contact_messages"),
-		Queue:                 env.get("RABBITMQ_QUEUE", "contact_messages"),
-		TLS:                   env.bool("RABBITMQ_TLS", false),
-		RetryDelays:           parseRetryDelays(env.get("RABBITMQ_RETRY_DELAYS", "")),
-		RetryJitter:           env.float("RABBITMQ_RETRY_JITTER", 0),
-		Heartbeat:             env.duration("RABBITMQ_HEARTBEAT", DefaultHeartbeat),
-		PublisherConfirms:     env.bool("RABBITMQ_PUBLISHER_CONFIRMS", false),
-		DisableReconnect:      !env.bool("RABBITMQ_RECONNECT", true),
-		ReconnectMaxAttempts:  env.int("RABBITMQ_RECONNECT_MAX_ATTEMPTS", 0),
-		ReconnectInitialDelay: env.duration("RABBITMQ_RECONNECT_INITIAL_DELAY", DefaultReconnectInitialDelay),
-		ReconnectMaxDelay:     env.duration("RABBITMQ_RECONNECT_MAX_DELAY", DefaultReconnectMaxDelay),
-		PrefetchCount:         env.int("RABBITMQ_PREFETCH_COUNT", 1),
-		ConsumerTag:           env.get("RABBITMQ_CONSUMER_TAG", ""),
-		ConsumerConcurrency:   env.int("RABBITMQ_CONSUMER_CONCURRENCY", 1),
+	cfg := SQSConfig{
+		QueueURL:            env.required("SQS_QUEUE_URL"),
+		DLQURL:              env.required("SQS_DLQ_URL"),
+		Region:              env.required("SQS_REGION"),
+		Endpoint:            env.get("SQS_ENDPOINT", ""),
+		RetryDelays:         parseRetryDelays(env.get("SQS_RETRY_DELAYS", "")),
+		RetryJitter:         env.float("SQS_RETRY_JITTER", 0),
+		MaxNumberOfMessages: env.int("SQS_MAX_MESSAGES", DefaultMaxNumberOfMessages),
+		WaitTimeSeconds:     env.int("SQS_WAIT_TIME_SECONDS", DefaultWaitTimeSeconds),
+		VisibilityTimeout:   env.duration("SQS_VISIBILITY_TIMEOUT", DefaultVisibilityTimeout),
+		ConsumerConcurrency: env.int("SQS_CONSUMER_CONCURRENCY", DefaultConsumerConcurrency),
 	}
 
 	validate := validator.New()
 	if err := validate.Struct(cfg); err != nil {
-		panic(fmt.Sprintf("Invalid RabbitMQ configuration: %v", err))
+		panic(fmt.Sprintf("Invalid SQS configuration: %v", err))
+	}
+	if cfg.VisibilityTimeout <= 0 || cfg.VisibilityTimeout > MaxVisibilityTimeout {
+		panic(fmt.Sprintf("%s (%s) must be greater than 0 and at most %s",
+			env.name("SQS_VISIBILITY_TIMEOUT"), cfg.VisibilityTimeout, MaxVisibilityTimeout))
+	}
+	// A stray LocalStack endpoint would redirect deployed traffic away from AWS.
+	if cfg.Endpoint != "" && GetEnv("ENVIRONMENT", "development") != "development" {
+		panic(fmt.Sprintf("%s is only allowed when ENVIRONMENT is development", env.name("SQS_ENDPOINT")))
 	}
 
 	return cfg
@@ -250,7 +247,8 @@ func (e prefixedEnv) duration(key string, defaultValue time.Duration) time.Durat
 	return d
 }
 
-// parseRetryDelays parses comma-separated duration strings (e.g., "5s,30s,5m,30m,2h")
+// parseRetryDelays parses comma-separated duration strings (e.g., "5s,30s,5m,30m,2h").
+// A step above MaxRetryDelay could never be requested successfully.
 func parseRetryDelays(s string) []time.Duration {
 	parts := splitList(s)
 	delays := make([]time.Duration, 0, len(parts))
@@ -263,6 +261,9 @@ func parseRetryDelays(s string) []time.Duration {
 		if d <= 0 {
 			panic(fmt.Sprintf("Retry delay must be positive, got %q", part))
 		}
+		if d > MaxRetryDelay {
+			panic(fmt.Sprintf("Retry delay must be at most %s, got %q", MaxRetryDelay, part))
+		}
 		delays = append(delays, d)
 	}
 
@@ -271,20 +272,4 @@ func parseRetryDelays(s string) []time.Duration {
 	}
 
 	return delays
-}
-
-// URL returns the AMQP connection URL with properly encoded credentials.
-// Uses amqps:// scheme when TLS is enabled, amqp:// otherwise.
-func (c RabbitMQConfig) URL() string {
-	scheme := "amqp"
-	if c.TLS {
-		scheme = "amqps"
-	}
-	u := &url.URL{
-		Scheme: scheme,
-		User:   url.UserPassword(c.User, c.Password),
-		Host:   fmt.Sprintf("%s:%d", c.Host, c.Port),
-		Path:   "/",
-	}
-	return u.String()
 }

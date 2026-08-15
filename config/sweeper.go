@@ -60,7 +60,7 @@ func NewSweeperConfig(retryDelays []time.Duration, jobTimeout time.Duration) Swe
 		panic(fmt.Sprintf("Invalid sweeper configuration: %v", err))
 	}
 	if cfg.ProcessingAge <= floor {
-		panic(fmt.Sprintf("SWEEPER_PROCESSING_AGE (%s) must exceed max RABBITMQ_RETRY_DELAYS (%s) + job timeout (%s) = %s",
+		panic(fmt.Sprintf("SWEEPER_PROCESSING_AGE (%s) must exceed max SQS_RETRY_DELAYS (%s) + job timeout (%s) = %s",
 			cfg.ProcessingAge, maxRetryDelay, jobTimeout, floor))
 	}
 

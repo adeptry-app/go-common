@@ -26,7 +26,7 @@ Shared Go package for common code across microservices.
 | [logger](logger/) | Structured logging with slog |
 | [metrics](metrics/) | Prometheus metrics collection |
 | [server](server/) | Router construction and HTTP server with graceful shutdown |
-| [queue](queue/) | RabbitMQ pub/sub with reconnection, retries, and DLQ |
+| [queue](queue/) | SQS pub/sub with a retry ladder, DLQ, and stale row recovery |
 | [redis](redis/) | Redis client and fixed-window counter |
 | [session](session/) | Redis session state and access-token revocation |
 | [ratelimit](ratelimit/) | Gin rate-limit middleware |

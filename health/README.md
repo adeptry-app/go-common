@@ -16,9 +16,7 @@ healthAgg := health.NewAggregator(3 * time.Second)
 
 // Register checkers
 healthAgg.Register(health.NewPgxChecker(pool))
-healthAgg.Register(health.NewRabbitMQCheckerWithProvider(publisher.Connection))
-healthAgg.Register(
-    health.NewQueueDepthChecker(publisher.Connection, publisher.DLQName(), 0))
+healthAgg.Register(health.NewConsumerChecker(consumer.ConsumptionError))
 healthAgg.Register(health.NewRedisChecker(client))
 healthAgg.Register(health.NewMinIOChecker(client, "bucket"))
 
@@ -33,12 +31,8 @@ router.GET("/health", healthAgg.Handler())
   "status": "healthy",
   "checks": {
     "postgres": { "status": "healthy", "latency": "1.2ms" },
-    "rabbitmq": { "status": "healthy", "latency": "0.3ms" },
-    "queue:contact_messages_dlq": {
-      "status": "healthy",
-      "latency": "0.8ms",
-      "details": { "messages": 0 }
-    }
+    "consumer": { "status": "healthy", "latency": "0.1ms" },
+    "redis": { "status": "healthy", "latency": "0.3ms" }
   }
 }
 ```
@@ -51,18 +45,10 @@ router.GET("/health", healthAgg.Handler())
 ## Available Checkers
 
 - `NewPgxChecker(pool *pgxpool.Pool)` - PostgreSQL ping, reported as "postgres"
-- `NewRabbitMQChecker(conn *amqp.Connection)` - Connection status (fixed
-  connection; goes stale if the owner reconnects)
-- `NewRabbitMQCheckerWithProvider(provider func() *amqp.Connection)` -
-  Connection status resolved on every check; use with the queue package's
-  auto-reconnecting publisher/consumer (`publisher.Connection`)
-- `NewQueueDepthChecker(provider, queueName, degradedThreshold)` - Reports a
-  queue's message count under `details.messages` (DLQ visibility). With
-  `degradedThreshold > 0` it turns degraded at that depth; note the default
-  handler returns 503 for degraded
 - `NewConsumerChecker(provider func() error)` - Fails while a queue consumer is
-  stopped or stuck retrying setup; pass `consumer.ConsumptionError`. A connection
-  checker alone stays green in both cases
+  stopped or stuck retrying receives; pass `consumer.ConsumptionError`. A
+  consumer that is receiving nothing has no connection to lose, so nothing else
+  reveals it
 - `NewRedisChecker(client *redis.Client)` - PING command
 - `NewMinIOChecker(client *minio.Client, bucket string)` - Bucket check
 

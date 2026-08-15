@@ -23,7 +23,6 @@ func TestQueueMetrics(t *testing.T) {
 	m.RecordPublish("jobs", false, 20*time.Millisecond)
 	m.RecordConsume("jobs", queue.OutcomeSuccess, time.Second)
 	m.RecordConsume("jobs", queue.OutcomeDLQ, time.Second)
-	m.RecordReconnect("consumer")
 	m.SetQueueDepth("jobs_dlq", 7)
 
 	if got := testutil.ToFloat64(m.PublishesTotal.WithLabelValues("jobs", "success")); got != 1 {
@@ -37,9 +36,6 @@ func TestQueueMetrics(t *testing.T) {
 	}
 	if got := testutil.ToFloat64(m.ConsumesTotal.WithLabelValues("jobs", queue.OutcomeDLQ)); got != 1 {
 		t.Errorf("consumes dlq = %v, want 1", got)
-	}
-	if got := testutil.ToFloat64(m.ReconnectsTotal.WithLabelValues("consumer")); got != 1 {
-		t.Errorf("reconnects = %v, want 1", got)
 	}
 	if got := testutil.ToFloat64(m.QueueDepth.WithLabelValues("jobs_dlq")); got != 7 {
 		t.Errorf("queue depth = %v, want 7", got)
