@@ -18,6 +18,7 @@ import (
 // sqsAPI is the SQS surface the publisher and consumer use, so tests can
 // substitute a fake for the real client.
 type sqsAPI interface {
+	GetQueueAttributes(ctx context.Context, params *sqs.GetQueueAttributesInput, optFns ...func(*sqs.Options)) (*sqs.GetQueueAttributesOutput, error)
 	SendMessage(ctx context.Context, params *sqs.SendMessageInput, optFns ...func(*sqs.Options)) (*sqs.SendMessageOutput, error)
 	ReceiveMessage(ctx context.Context, params *sqs.ReceiveMessageInput, optFns ...func(*sqs.Options)) (*sqs.ReceiveMessageOutput, error)
 	DeleteMessage(ctx context.Context, params *sqs.DeleteMessageInput, optFns ...func(*sqs.Options)) (*sqs.DeleteMessageOutput, error)
@@ -38,6 +39,26 @@ func newSQSClient(ctx context.Context, cfg config.SQSConfig) (*sqs.Client, error
 		opts = append(opts, func(o *sqs.Options) { o.BaseEndpoint = aws.String(cfg.Endpoint) })
 	}
 	return sqs.NewFromConfig(awsCfg, opts...), nil
+}
+
+// verifyTimeout bounds the startup check; the SDK sets no response timeout, so
+// a stalled endpoint would otherwise hang construction forever.
+const verifyTimeout = 10 * time.Second
+
+// verifyQueue checks that the queue exists and is reachable. An earlier caller
+// deadline still wins.
+func verifyQueue(ctx context.Context, client sqsAPI, queueURL string) error {
+	ctx, cancel := context.WithTimeout(ctx, verifyTimeout)
+	defer cancel()
+
+	_, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
+		QueueUrl:       aws.String(queueURL),
+		AttributeNames: []types.QueueAttributeName{types.QueueAttributeNameQueueArn},
+	})
+	if err != nil {
+		return fmt.Errorf("%w: %s: %v", ErrQueueUnavailable, queueURL, err)
+	}
+	return nil
 }
 
 // queueName is the last path segment of a queue URL, used as the metrics label.

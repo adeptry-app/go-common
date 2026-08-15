@@ -70,9 +70,11 @@ type SQSConsumer struct {
 	stopCh    chan struct{}
 }
 
-// NewSQSConsumer creates a consumer for the queue named by cfg.QueueURL.
-// If logger is nil, slog.Default() is used. ctx bounds credential resolution
-// only, not the lifetime of the consumer.
+// NewSQSConsumer creates a consumer for the queue named by cfg.QueueURL and
+// checks that both it and the DLQ are reachable at startup; the DLQ is only
+// used on the quarantine path, so a typo there would surface days later.
+// If logger is nil, slog.Default() is used. ctx bounds construction only, not
+// the lifetime of the consumer.
 func NewSQSConsumer(
 	ctx context.Context,
 	cfg config.SQSConfig,
@@ -82,6 +84,11 @@ func NewSQSConsumer(
 	client, err := newSQSClient(ctx, cfg)
 	if err != nil {
 		return nil, err
+	}
+	for _, queueURL := range []string{cfg.QueueURL, cfg.DLQURL} {
+		if err := verifyQueue(ctx, client, queueURL); err != nil {
+			return nil, err
+		}
 	}
 	return newConsumer(client, cfg, logger, opts...), nil
 }
