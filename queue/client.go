@@ -41,8 +41,16 @@ func newSQSClient(ctx context.Context, cfg config.SQSConfig) (*sqs.Client, error
 	return sqs.NewFromConfig(awsCfg, opts...), nil
 }
 
-// verifyQueue checks that the queue exists and is reachable.
+// verifyTimeout bounds the startup check; the SDK sets no response timeout, so
+// a stalled endpoint would otherwise hang construction forever.
+const verifyTimeout = 10 * time.Second
+
+// verifyQueue checks that the queue exists and is reachable. An earlier caller
+// deadline still wins.
 func verifyQueue(ctx context.Context, client sqsAPI, queueURL string) error {
+	ctx, cancel := context.WithTimeout(ctx, verifyTimeout)
+	defer cancel()
+
 	_, err := client.GetQueueAttributes(ctx, &sqs.GetQueueAttributesInput{
 		QueueUrl:       aws.String(queueURL),
 		AttributeNames: []types.QueueAttributeName{types.QueueAttributeNameQueueArn},

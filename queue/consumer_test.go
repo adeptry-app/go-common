@@ -35,14 +35,26 @@ type fakeSQS struct {
 	deleteErr    error
 	receiveErr   error
 	attributeErr error
+
+	// attributeStall blocks the call until its context ends, standing in for an
+	// endpoint that accepts the request and never answers.
+	attributeStall bool
+	verifyDeadline time.Time
 }
 
-func (f *fakeSQS) GetQueueAttributes(_ context.Context, in *sqs.GetQueueAttributesInput, _ ...func(*sqs.Options)) (*sqs.GetQueueAttributesOutput, error) {
+func (f *fakeSQS) GetQueueAttributes(ctx context.Context, in *sqs.GetQueueAttributesInput, _ ...func(*sqs.Options)) (*sqs.GetQueueAttributesOutput, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.verified = append(f.verified, aws.ToString(in.QueueUrl))
-	if f.attributeErr != nil {
-		return nil, f.attributeErr
+	f.verifyDeadline, _ = ctx.Deadline()
+	stall, err := f.attributeStall, f.attributeErr
+	f.mu.Unlock()
+
+	if stall {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if err != nil {
+		return nil, err
 	}
 	return &sqs.GetQueueAttributesOutput{}, nil
 }
