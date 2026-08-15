@@ -96,6 +96,27 @@ func TestPublish_AfterClose(t *testing.T) {
 	}
 }
 
+// =============================================================================
+// Startup Verification Tests
+// =============================================================================
+
+func TestVerifyQueue(t *testing.T) {
+	fake := newFakeSQS()
+	cfg := testConfig(time.Minute)
+
+	if err := verifyQueue(context.Background(), fake, cfg.QueueURL); err != nil {
+		t.Fatalf("verifyQueue() = %v, want nil for a reachable queue", err)
+	}
+	if len(fake.verified) != 1 || fake.verified[0] != cfg.QueueURL {
+		t.Errorf("verified %v, want the queue URL once", fake.verified)
+	}
+
+	fake.attributeErr = errors.New("AWS.SimpleQueueService.NonExistentQueue")
+	if err := verifyQueue(context.Background(), fake, cfg.QueueURL); !errors.Is(err, ErrQueueUnavailable) {
+		t.Errorf("verifyQueue() = %v, want ErrQueueUnavailable", err)
+	}
+}
+
 func TestPublish_ConcurrentWithClose(t *testing.T) {
 	fake := newFakeSQS()
 	p := newPublisher(fake, testConfig(time.Minute))
@@ -214,6 +235,11 @@ func TestErrorDefinitions(t *testing.T) {
 			name:    "ErrClientFailed",
 			err:     ErrClientFailed,
 			wantMsg: "failed to create SQS client",
+		},
+		{
+			name:    "ErrQueueUnavailable",
+			err:     ErrQueueUnavailable,
+			wantMsg: "queue unavailable",
 		},
 		{
 			name:    "ErrMarshalFailed",

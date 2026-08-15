@@ -248,6 +248,35 @@ func TestIntegration_PublishConsume(t *testing.T) {
 	}
 }
 
+func TestIntegration_ConstructorRejectsMissingQueue(t *testing.T) {
+	cfg := integrationConfig(t, "it_missing", nil)
+	missing := localstackEndpoint + "/000000000000/it_missing_typo"
+
+	t.Run("publisher main queue", func(t *testing.T) {
+		broken := cfg
+		broken.QueueURL = missing
+		if _, err := NewSQSPublisher(context.Background(), broken); !errors.Is(err, ErrQueueUnavailable) {
+			t.Errorf("NewSQSPublisher() = %v, want ErrQueueUnavailable", err)
+		}
+	})
+
+	t.Run("consumer main queue", func(t *testing.T) {
+		broken := cfg
+		broken.QueueURL = missing
+		if _, err := NewSQSConsumer(context.Background(), broken, testLogger()); !errors.Is(err, ErrQueueUnavailable) {
+			t.Errorf("NewSQSConsumer() = %v, want ErrQueueUnavailable", err)
+		}
+	})
+
+	t.Run("consumer DLQ", func(t *testing.T) {
+		broken := cfg
+		broken.DLQURL = missing
+		if _, err := NewSQSConsumer(context.Background(), broken, testLogger()); !errors.Is(err, ErrQueueUnavailable) {
+			t.Errorf("NewSQSConsumer() = %v, want ErrQueueUnavailable for an unreachable DLQ", err)
+		}
+	})
+}
+
 // =============================================================================
 // DLQ Flow
 // =============================================================================

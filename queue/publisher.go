@@ -19,10 +19,11 @@ import (
 
 // Common errors returned by the queue package.
 var (
-	ErrClientFailed    = errors.New("failed to create SQS client")
-	ErrMarshalFailed   = errors.New("failed to marshal message")
-	ErrPublishFailed   = errors.New("failed to publish message")
-	ErrPublisherClosed = errors.New("publisher is closed")
+	ErrClientFailed     = errors.New("failed to create SQS client")
+	ErrQueueUnavailable = errors.New("queue unavailable")
+	ErrMarshalFailed    = errors.New("failed to marshal message")
+	ErrPublishFailed    = errors.New("failed to publish message")
+	ErrPublisherClosed  = errors.New("publisher is closed")
 )
 
 // Message attributes carrying what SQS has no field for.
@@ -50,14 +51,19 @@ type SQSPublisher struct {
 	metrics  MetricsRecorder
 }
 
-// NewSQSPublisher creates a publisher for the queue named by cfg.QueueURL.
+// NewSQSPublisher creates a publisher for the queue named by cfg.QueueURL and
+// checks that the queue is reachable, so a typo'd URL or a missing IAM grant
+// fails the deploy instead of every later request.
 //
 // The queue itself is created by Terraform (deployed) or the LocalStack init
-// script (local); nothing is declared here. ctx bounds credential resolution
-// only, not the lifetime of the publisher.
+// script (local); nothing is declared here. ctx bounds construction only, not
+// the lifetime of the publisher.
 func NewSQSPublisher(ctx context.Context, cfg config.SQSConfig, opts ...PublisherOption) (*SQSPublisher, error) {
 	client, err := newSQSClient(ctx, cfg)
 	if err != nil {
+		return nil, err
+	}
+	if err := verifyQueue(ctx, client, cfg.QueueURL); err != nil {
 		return nil, err
 	}
 	return newPublisher(client, cfg, opts...), nil

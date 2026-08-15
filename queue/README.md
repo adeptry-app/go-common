@@ -27,7 +27,11 @@ err = publisher.Publish(ctx, message)
 maxRetries := publisher.MaxRetries()
 ```
 
-`ctx` bounds credential resolution only, not the lifetime of the publisher.
+Both constructors check their queues with `GetQueueAttributes` and fail if one
+is unreachable, so a typo'd URL or a missing IAM grant fails the deploy rather
+than every later message. The consumer checks the DLQ too, since nothing else
+touches it until the first quarantine. `ctx` bounds construction only, not the
+lifetime of the publisher.
 
 ## Consumer Usage
 
@@ -287,7 +291,8 @@ AI_SQS_RETRY_DELAYS=30s,2m,10m     # queue 2 retry ladder
 
 Queues are created by Terraform in deployed environments and by a LocalStack
 init script locally. Neither the publisher nor the consumer declares anything
-at startup. Each queue pair is:
+at startup, but both read their queues' attributes once, so the task role needs
+`sqs:GetQueueAttributes` alongside send/receive/delete. Each queue pair is:
 
 - **Main queue** (`emails`) - with a redrive policy to the DLQ as a backstop
 - **DLQ** (`emails_dlq`) - permanent failures and quarantined bodies

@@ -28,11 +28,23 @@ type fakeSQS struct {
 	deleted    []*sqs.DeleteMessageInput
 	visibility []*sqs.ChangeMessageVisibilityInput
 	requested  []int32
+	verified   []string
 
-	batches    chan []types.Message
-	sendErr    error
-	deleteErr  error
-	receiveErr error
+	batches      chan []types.Message
+	sendErr      error
+	deleteErr    error
+	receiveErr   error
+	attributeErr error
+}
+
+func (f *fakeSQS) GetQueueAttributes(_ context.Context, in *sqs.GetQueueAttributesInput, _ ...func(*sqs.Options)) (*sqs.GetQueueAttributesOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.verified = append(f.verified, aws.ToString(in.QueueUrl))
+	if f.attributeErr != nil {
+		return nil, f.attributeErr
+	}
+	return &sqs.GetQueueAttributesOutput{}, nil
 }
 
 func newFakeSQS() *fakeSQS {
