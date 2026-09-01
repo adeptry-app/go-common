@@ -39,6 +39,8 @@ func pathLabels(t *testing.T, name string) []string {
 // New registers in the default Prometheus registry, so it can only be called
 // once per process; all middleware labeling behavior is exercised here.
 func TestMiddlewarePathLabels(t *testing.T) {
+	const unmatchedPath = "unmatched"
+
 	gin.SetMode(gin.TestMode)
 	m := New(Config{ServiceName: "middlewaretest", Namespace: "testns"})
 

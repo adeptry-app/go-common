@@ -124,7 +124,7 @@ func (m *AuthMiddleware) validateAndStore(c *gin.Context) authOutcome {
 	if err != nil {
 		slog.Warn("token validation failed",
 			"error", err,
-			"path", c.Request.URL.Path,
+			"route", RouteTemplate(c),
 		)
 		return authInvalid
 	}
@@ -133,7 +133,7 @@ func (m *AuthMiddleware) validateAndStore(c *gin.Context) authOutcome {
 	ttl := claims.GetTTL()
 	if ttl <= 0 {
 		slog.Warn("token expired",
-			"path", c.Request.URL.Path,
+			"route", RouteTemplate(c),
 		)
 		return authExpired
 	}
@@ -145,7 +145,7 @@ func (m *AuthMiddleware) validateAndStore(c *gin.Context) authOutcome {
 		// Failing open here would make every revocation advisory.
 		slog.Error("session validation unavailable",
 			"error", err,
-			"path", c.Request.URL.Path,
+			"route", RouteTemplate(c),
 		)
 		return authValidatorDown
 	}

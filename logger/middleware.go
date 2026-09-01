@@ -56,7 +56,7 @@ func RequestLogger(logger *slog.Logger) gin.HandlerFunc {
 		// Build log attributes
 		attrs := []any{
 			"method", c.Request.Method,
-			"path", c.Request.URL.Path,
+			"route", middleware.RouteTemplate(c),
 			"status", status,
 			"duration_ms", duration.Milliseconds(),
 			"ip", c.ClientIP(),
@@ -111,7 +111,7 @@ func Recovery(logger *slog.Logger) gin.HandlerFunc {
 				logWithContext.Error("Panic recovered",
 					"error", err,
 					"method", c.Request.Method,
-					"path", c.Request.URL.Path,
+					"route", middleware.RouteTemplate(c),
 				)
 
 				// Abort with internal server error

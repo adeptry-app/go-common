@@ -7,10 +7,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
-)
 
-// unmatchedPath is the label used for requests that match no route
-const unmatchedPath = "unmatched"
+	"github.com/adeptry-app/go-common/middleware"
+)
 
 // Metrics holds all Prometheus metrics
 type Metrics struct {
@@ -91,13 +90,8 @@ func (m *Metrics) Middleware() gin.HandlerFunc {
 		duration := time.Since(start)
 		status := c.Writer.Status()
 		method := c.Request.Method
-		path := c.FullPath() // Use route pattern, not actual path with IDs
 
-		// Unmatched routes have no pattern; a raw URL label would be unbounded cardinality
-		if path == "" {
-			path = unmatchedPath
-		}
-
-		m.RecordHTTPRequest(method, path, status, duration)
+		// A raw URL label would be unbounded cardinality
+		m.RecordHTTPRequest(method, middleware.RouteTemplate(c), status, duration)
 	}
 }

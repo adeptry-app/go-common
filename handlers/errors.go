@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/adeptry-app/go-common/logger"
+	"github.com/adeptry-app/go-common/middleware"
 	"github.com/gin-gonic/gin"
 )
 
@@ -27,7 +28,7 @@ func LogAndRespondError(c *gin.Context, statusCode int, err error, userMsg strin
 		"error", err,
 		"status", statusCode,
 		"method", c.Request.Method,
-		"path", c.Request.URL.Path,
+		"route", middleware.RouteTemplate(c),
 	)
 	RespondError(c, statusCode, userMsg)
 }
