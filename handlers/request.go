@@ -78,7 +78,7 @@ func MergeJSONObject(raw json.RawMessage, set map[string]any, del ...string) (js
 	obj := map[string]json.RawMessage{}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &obj); err != nil {
-			return nil, fmt.Errorf("payload must be a JSON object: %w", err)
+			return nil, errors.New("payload must be a JSON object")
 		}
 		if obj == nil {
 			return nil, fmt.Errorf("payload must be a JSON object: got null")
