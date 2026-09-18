@@ -1,12 +1,18 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -42,9 +48,10 @@ func TestPgErrorResponse(t *testing.T) {
 		// statement_timeout kills land here; without this they read as a 500.
 		{"query canceled", pgErr("57014", ""), http.StatusGatewayTimeout, "request timed out", true},
 
-		// SQL owns the text for business rules and lifecycle conflicts.
+		// SQL owns the text for business rules, lifecycle conflicts and plan limits.
 		{"raise_exception", pgErr("P0001", "Level must be 1-30"), http.StatusBadRequest, "Level must be 1-30", true},
 		{"not in prerequisite state", pgErr("55000", "Book is archived"), http.StatusConflict, "Book is archived", true},
+		{"plan limit", pgErr("P0402", "Free plan allows 5 heroes"), http.StatusPaymentRequired, "Free plan allows 5 heroes", true},
 
 		{"connection exception", pgErr("08006", ""), http.StatusServiceUnavailable, "database connection error", true},
 		{"connection class, any member", pgErr("08P01", ""), http.StatusServiceUnavailable, "database connection error", true},
@@ -65,6 +72,63 @@ func TestPgErrorResponse(t *testing.T) {
 			}
 			if msg != tt.wantMsg {
 				t.Errorf("msg = %q, want %q", msg, tt.wantMsg)
+			}
+		})
+	}
+}
+
+// HandlePgxError end to end: status, body and whether it logs.
+func TestHandlePgxError(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+		wantMsg    string
+		wantLogged bool
+	}{
+		// Not logged, no server fault.
+		{"no rows", pgx.ErrNoRows, http.StatusNotFound, "not found", false},
+		{"no data found", pgErr("P0002", ""), http.StatusNotFound, "not found", false},
+		{"plan limit", pgErr("P0402", "Free plan allows 5 heroes"), http.StatusPaymentRequired, "Free plan allows 5 heroes", false},
+
+		{"unique violation", pgErr("23505", "dup"), http.StatusConflict, "resource already exists", true},
+		{"foreign key violation", pgErr("23503", "fk"), http.StatusBadRequest, "referenced resource not found", true},
+		{"raise_exception keeps the SQL message", pgErr("P0001", "test error"), http.StatusBadRequest, "test error", true},
+		{"unmapped SQLSTATE", pgErr("XX000", "internal"), http.StatusInternalServerError, "internal server error", true},
+		{"non-database error", errors.New("something broke"), http.StatusInternalServerError, "internal server error", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			// slog.SetDefault also rewires the std log writer and flags.
+			previousLogger, previousWriter, previousFlags := slog.Default(), log.Writer(), log.Flags()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&buf, nil)))
+			t.Cleanup(func() {
+				slog.SetDefault(previousLogger)
+				log.SetOutput(previousWriter)
+				log.SetFlags(previousFlags)
+			})
+
+			gin.SetMode(gin.TestMode)
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+
+			HandlePgxError(c, tt.err)
+
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d", w.Code, tt.wantStatus)
+			}
+			var resp errorResponse
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("unmarshal response: %v (%s)", err, w.Body.String())
+			}
+			if resp.Error != tt.wantMsg {
+				t.Errorf("message = %q, want %q", resp.Error, tt.wantMsg)
+			}
+			if logged := buf.Len() > 0; logged != tt.wantLogged {
+				t.Errorf("logged = %v, want %v (%s)", logged, tt.wantLogged, buf.String())
 			}
 		})
 	}
