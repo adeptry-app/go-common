@@ -65,6 +65,8 @@ func PgErrorResponse(err error) (status int, msg string, ok bool) {
 		return http.StatusGatewayTimeout, "request timed out", true
 	case "P0001": // raise_exception — SQL owns the message for business rules
 		return http.StatusBadRequest, pgErr.Message, true
+	case "P0402": // plan limit (Adeptry SQLSTATE) - SQL owns the message
+		return http.StatusPaymentRequired, pgErr.Message, true
 	case "55000": // object_not_in_prerequisite_state (e.g. soft-deleted row)
 		return http.StatusConflict, pgErr.Message, true
 	case "40001", "40P01": // serialization_failure, deadlock_detected — retryable
@@ -89,14 +91,14 @@ func HandlePgxError(c *gin.Context, err error) {
 }
 
 // respondPgError answers from the shared mapping, or logs err behind fallback.
-// A 404 and a client disconnect are not server faults, so they are not logged.
+// A 404, a plan refusal and a client disconnect are not logged: no server fault.
 func respondPgError(c *gin.Context, err error, fallback string) {
 	status, msg, ok := PgErrorResponse(err)
 	if !ok {
 		LogAndRespondError(c, http.StatusInternalServerError, err, fallback)
 		return
 	}
-	if status == http.StatusNotFound || status == StatusClientClosedRequest {
+	if status == http.StatusNotFound || status == http.StatusPaymentRequired || status == StatusClientClosedRequest {
 		RespondError(c, status, msg)
 		return
 	}

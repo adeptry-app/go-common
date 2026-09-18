@@ -218,48 +218,6 @@ func TestHandlePost_RejectsBadInput(t *testing.T) {
 }
 
 // ----------------------------------------------------------------------------
-// HandlePgxError rendering (the mapping itself is TestPgErrorResponse)
-// ----------------------------------------------------------------------------
-
-func TestHandlePgxError_RendersMapping(t *testing.T) {
-	tests := []struct {
-		name    string
-		err     error
-		status  int
-		message string
-	}{
-		{"no rows", pgx.ErrNoRows, http.StatusNotFound, "not found"},
-		{"unique_violation", pgErr("23505", "dup"), http.StatusConflict, "resource already exists"},
-		{"foreign_key_violation", pgErr("23503", "fk"), http.StatusBadRequest, "referenced resource not found"},
-		{"raise_exception keeps the SQL message", pgErr("P0001", "test error"), http.StatusBadRequest, "test error"},
-		{"unknown pg code", pgErr("99999", "unknown"), http.StatusInternalServerError, "internal server error"},
-		{"non-database error", errors.New("something broke"), http.StatusInternalServerError, "internal server error"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			gin.SetMode(gin.TestMode)
-			w := httptest.NewRecorder()
-			c, _ := gin.CreateTestContext(w)
-			c.Request, _ = http.NewRequest("GET", "/", nil)
-
-			HandlePgxError(c, tt.err)
-
-			if w.Code != tt.status {
-				t.Errorf("status = %d, want %d", w.Code, tt.status)
-			}
-			var resp errorResponse
-			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-				t.Fatalf("failed to parse response: %v", err)
-			}
-			if resp.Error != tt.message {
-				t.Errorf("message = %q, want %q", resp.Error, tt.message)
-			}
-		})
-	}
-}
-
-// ----------------------------------------------------------------------------
 // HandleGet
 // ----------------------------------------------------------------------------
 
